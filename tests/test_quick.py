@@ -163,11 +163,9 @@ def test_training_step():
     )
     
     # Create fake batch
-    batch = {
-        'input_ids': torch.randint(0, VOCAB.vocab_size, (4, 52)),
-    }
-    
-    losses = trainer.train_step(batch)
+    real_seqs = torch.randint(0, VOCAB.vocab_size, (4, 52))
+
+    losses = trainer.train_step(real_seqs)
     assert 'g_loss' in losses
     assert 'd_loss' in losses
     print(f"✓ Training step: g_loss={losses['g_loss']:.4f}, d_loss={losses['d_loss']:.4f}")
