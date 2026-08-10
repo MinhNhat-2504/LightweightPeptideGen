@@ -1,0 +1,17 @@
+{
+  "train": {
+    "n_samples": 129121,
+    "n_amp": 64561,
+    "n_non_amp": 64560
+  },
+  "val": {
+    "n_samples": 27669,
+    "n_amp": 13834,
+    "n_non_amp": 13835
+  },
+  "test": {
+    "n_samples": 27670,
+    "n_amp": 13835,
+    "n_non_amp": 13835
+  }
+}

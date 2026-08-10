@@ -1,0 +1,43 @@
+# LightweightPeptideGen - Requirements
+# Mô hình sinh peptide ngắn có độ ổn định cấu trúc cao
+
+# Core Deep Learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# ESM2 Pre-trained Protein Language Model
+fair-esm>=2.0.0  # Facebook AI Research ESM (legacy esm2_embedder.py)
+transformers>=4.30.0  # HF backend for ESM-2 / ESMFold (esm2_hf.py, oracle, foldability, ESMFold)
+# accelerate>=0.20.0  # only needed for scripts/esmfold_plddt.py on Colab/large GPU
+
+# Machine learning head for the AMP / hemolysis oracle (B6/B7)
+scikit-learn>=1.2.0
+
+# Graph Neural Networks
+torch-geometric>=2.3.0  # For GAT layers
+# Or use standalone implementation
+
+# Scientific Computing
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Data Processing
+pandas>=2.0.0
+
+# Configuration & Logging
+PyYAML>=6.0
+tqdm>=4.65.0
+
+# Visualization (optional)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Bioinformatics (optional - for advanced analysis)
+# biopython>=1.81
+
+# Testing
+pytest>=7.3.0
+
+# Code Quality
+# black>=23.0.0
+# flake8>=6.0.0

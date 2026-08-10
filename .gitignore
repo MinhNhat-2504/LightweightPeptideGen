@@ -1,0 +1,52 @@
+# ---------------------------------------------------------------------------
+# Bản thảo bài báo — KHÔNG đưa lên GitHub (paper đã submit, chưa public)
+# ---------------------------------------------------------------------------
+*.tex
+*.pdf
+*.bib
+_paper_text.txt
+REVISED_PAPER.md
+PAPER_REVISION_PHASE*.md
+figures/
+
+# ---------------------------------------------------------------------------
+# Dữ liệu & artifact của quá trình chạy (nặng, sinh lại được)
+# ---------------------------------------------------------------------------
+dataset/*.csv
+dataset/*.fasta
+checkpoints/
+results/
+logs/
+baselines/logs/
+*.pt
+*.pth
+*.pkl
+*.npy
+*.npz
+*.zip
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+build/
+dist/
+
+# Môi trường ảo
+.venv/
+venv/
+env/
+
+# ---------------------------------------------------------------------------
+# Hệ điều hành & IDE
+# ---------------------------------------------------------------------------
+.DS_Store
+__MACOSX/
+Thumbs.db
+*.code-workspace
+.vscode/
+.idea/

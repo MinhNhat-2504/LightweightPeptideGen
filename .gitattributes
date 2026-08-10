@@ -1,0 +1,17 @@
+# Chuẩn hoá line ending: lưu trong repo luôn là LF
+* text=auto
+
+# Shell script BẮT BUỘC là LF — dính CRLF sẽ lỗi khi chạy trên Linux/Colab
+*.sh text eol=lf
+
+# PowerShell giữ CRLF cho Windows
+*.ps1 text eol=crlf
+
+# File nhị phân — đừng đụng vào
+*.pt   binary
+*.pth  binary
+*.pkl  binary
+*.npy  binary
+*.npz  binary
+*.png  binary
+*.pdf  binary

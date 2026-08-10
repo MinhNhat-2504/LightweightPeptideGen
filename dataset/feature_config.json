@@ -1,0 +1,27 @@
+{
+  "features": {
+    "sequence": "sequence",
+    "label": "label",
+    "basic_features": [
+      "length",
+      "molecular_weight",
+      "aromaticity",
+      "instability_index",
+      "isoelectric_point",
+      "gravy",
+      "charge_at_pH7",
+      "hydrophobic_ratio",
+      "positive_ratio",
+      "negative_ratio",
+      "aromatic_ratio",
+      "aliphatic_index",
+      "boman_index"
+    ],
+    "advanced_toxicity_features": [
+      "hydrophobic_moment",
+      "amphipathicity",
+      "hemolytic_score",
+      "therapeutic_score"
+    ]
+  }
+}

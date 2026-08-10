@@ -1,0 +1,175 @@
+# =============================================================================
+# LIGHTWEIGHT PEPTIDE GENERATION MODEL CONFIGURATION
+# Mô hình sinh peptide ngắn có độ ổn định cấu trúc cao
+# =============================================================================
+
+# Model Configuration
+model:
+  name: "LightweightPeptideGAN"
+  architecture: "fusion"    # "fusion" = Transformer + ESM/GATv2 cross-attention (paper §3.4-3.6)
+                            # "gru"    = legacy GRU generator (ablation only)
+  latent_dim: 128           # Dimension của noise vector
+  embedding_dim: 128        # d_model (paper: 128)
+  hidden_dim: 512           # FFN hidden (paper: 512)
+  num_layers: 3             # Decoder layers (paper: 3 for fusion; 2 for legacy GRU)
+  mem_tokens: 16            # Số token bộ nhớ fusion mà decoder cross-attend tới
+  esm_dim: null             # Đặt = embed dim ESM-2 dùng cho MLE warm-up (480 cho 35M,
+                            # 1280 cho 650M) để pha GAN load đủ trọng số warm-up; null = chỉ prior (z,C)
+  dropout: 0.2              # Dropout rate
+  use_attention: true       # Sử dụng attention mechanism
+  bidirectional: false      # Must be false for autoregressive generation
+
+# Generator Configuration  
+generator:
+  type: "Transformer"       # GRU, LSTM, Transformer (Transformer -> fusion architecture)
+  num_heads: 4              # Số attention heads (nếu dùng Transformer)
+  condition_dim: 8          # Dimension của condition vector (8 features từ CSV)
+  esm_conditioned: false    # Use ESM2-conditioned generator
+
+# Discriminator Configuration
+discriminator:
+  type: "CNN"               # CNN, GRU, LSTM
+  num_filters: [64, 128, 256]  # Matches checkpoint_epoch_70.pt — do NOT change when resuming from old checkpoints
+  kernel_sizes: [3, 5, 7]
+  esm_guided: false
+
+# ESM2 Configuration (Pre-trained protein language model)
+esm2:
+  use_esm: true             # Enable ESM2 integration
+  esm_model: "esm2_t33_650M_UR50D"  # 33 layers, 650M params (best quality)
+  # Available ESM2 models:
+  # - esm2_t6_8M_UR50D    : 6 layers, 8M params (fastest)
+  # - esm2_t12_35M_UR50D  : 12 layers, 35M params
+  # - esm2_t30_150M_UR50D : 30 layers, 150M params  
+  # - esm2_t33_650M_UR50D : 33 layers, 650M params ← USING THIS
+  # - esm2_t36_3B_UR50D   : 36 layers, 3B params (most accurate)
+  esm_repr_layer: -1        # Layer to extract representations (-1 = last)
+  esm_pooling: "mean"       # Pooling strategy: mean, cls, max
+  freeze_esm: true          # Freeze ESM weights during training
+  projection_dim: 128       # Project ESM embeddings to this dimension
+  num_gat_layers: 2         # Number of GAT layers for ESM2StructureEvaluator
+
+# Feature-based Loss Configuration (NEW)
+feature_loss:
+  enabled: true             # Enable feature-based loss
+  stability_weight: 0.3     # Weight for stability loss (instability_index < 40)
+  therapeutic_weight: 0.2   # Weight for therapeutic score loss
+  toxicity_weight: 0.3      # Weight for hemolytic/toxicity loss
+  conditioning_weight: 0.2  # Weight for feature conditioning loss
+  # Target values for quality peptides
+  target_instability_index: 30.0   # Target II (< 40 is stable)
+  target_therapeutic_score: 0.7    # Target therapeutic score
+  max_hemolytic_score: 0.3         # Maximum acceptable hemolytic score
+
+# Structure Evaluator Configuration
+structure_evaluator:
+  use_gat: true             # Sử dụng Graph Attention Network
+  gat_hidden: 64
+  gat_heads: 4
+  stability_weight: 0.3     # Trọng số cho stability loss
+
+# Data Configuration
+data:
+  train_path: "dataset/train.fasta"
+  train_csv: "dataset/train.csv"    # CSV with features for conditional training
+  val_path: "dataset/val.fasta"
+  val_csv: "dataset/val.csv"        # CSV with features for validation
+  test_path: "dataset/test.fasta"
+  test_csv: "dataset/test.csv"
+  max_seq_length: 50        # Độ dài tối đa của peptide
+  min_seq_length: 5         # Độ dài tối thiểu của peptide
+  vocab_size: 24            # 20 amino acids + 4 special tokens (PAD, SOS, EOS, UNK)
+  use_csv_features: true    # Use CSV features for conditional generation
+
+# Training Configuration
+training:
+  batch_size: 8192             # 2x original (was 16384 → OOM)
+  gradient_accumulation_steps: 1  # Effective batch = 8192
+  num_epochs: 200
+  learning_rate: 0.00003     # 10x lower for fine tuning (was 0.0003)
+  lr_discriminator: 0.00001  # 5x lower for fine tuning (was 0.00005)
+  beta1: 0.5                # Adam beta1
+  beta2: 0.999              # Adam beta2
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  label_smoothing: 0.15     # Increased from 0.1: softer D targets to reduce D dominance
+  noise_std: 0.08           # Increased from 0.05: more noise into D inputs
+  use_amp: true             # Mixed precision training (CRITICAL for 16GB GPU)
+  use_scheduler: true       # Enable learning rate scheduler
+  
+  # Adaptive D training
+  adaptive_d: true          # Enable adaptive D training
+  d_threshold: 2.0          # Skip D when gap > 2.0 (was 3.0 — more aggressive skipping)
+  g_steps_boost: 3.0        # Boost G steps when D is strong
+  
+  # GAN specific - rebalanced
+  d_steps: 1                # Discriminator steps per iteration
+  g_steps: 10               # Increased from 8 → 10
+
+  # --- A3: discrete relaxation + GAN objective (ablation-selectable) ---
+  discrete_relaxation: "gumbel"  # "softmax" (legacy) | "gumbel" (straight-through, cleaner gradient)
+  gumbel_tau: 1.0                # Gumbel-Softmax temperature
+  gan_loss: "bce"                # "bce" (non-saturating) | "wgan_gp" (paper Eq.8-9; runs fp32)
+  lambda_gp: 10.0                # WGAN-GP gradient-penalty weight (when gan_loss=wgan_gp)
+  
+  # Loss weights — stable10: allow adversarial to dominate so G val loss can break through 0.40
+  adversarial_weight: 0.7   # Increased 0.5→0.7: G focuses more on fooling D → lower adv loss
+  reconstruction_weight: 0.3
+  stability_weight: 0.1
+  target_stability_ii: 30.0
+  diversity_weight: 0.8     # Reduced 1.4→0.8: less entropy pressure, let MinibatchStd handle diversity
+  entropy_weight: 0.5       # 0.8→0.5: less aggressive push
+  feature_matching_weight: 0.2
+  # --- New (2025-02 fix): length collapse + motif diversity ---
+  ngram_weight: 0.5          # Increased 0.45→0.5: keep ngram diversity pressure high
+  length_penalty_weight: 0.5 # EOS supervision (cumulative prob formula — always active)
+  target_length_min: 10      # EOS cumulative prob should be ~0 before pos 10
+  target_length_max: 30      # EOS cumulative prob should be ~1 by pos 30
+  reconstruction_loss: "mse" # MSE for soft one-hot targets
+  
+  # Speed optimization (KEY for reducing training time with ESM2-650M)
+  stability_eval_interval: 50   # Compute stability every N batches
+  val_frequency: 5              # Validate every 5 epochs
+  val_subset_ratio: 0.1         # Use 10% of val data
+  disable_stability_training: true  # DISABLE for speed testing
+  
+  # Early stopping
+  patience: 50                 # Increased to 50 as requested to prevent early plateau stop
+  min_delta: 0.0005           # Lower threshold for improvement
+
+# Generation Configuration
+generation:
+  num_samples: 1000         # Số peptide cần sinh
+  temperature: 1.0          # Sampling temperature
+  top_k: 0                  # Top-k sampling (0 = disabled)
+  top_p: 0.9                # Nucleus sampling threshold
+  
+  # Filtering criteria
+  min_stability_score: 0.5
+  max_instability_index: 40
+  target_length: [10, 30]   # Độ dài mong muốn [min, max]
+
+# Logging & Checkpoints
+logging:
+  log_dir: "./logs"
+  checkpoint_dir: "./checkpoints"
+  save_every: 10            # Save checkpoint every N epochs
+  log_every: 100            # Log every N iterations
+
+# Device Configuration
+device:
+  cuda: true
+  gpu_id: 0
+  num_workers: 8            # INCREASED: More workers for faster data loading (4 -> 8)
+  pin_memory: true          # Pin memory for faster GPU transfer
+  gradient_checkpointing: true  # Enable để giảm memory (CRITICAL with larger models)
+  mixed_precision: true      # Use float16 (reduces memory by 50%)
+
+# Amino Acid Configuration
+amino_acids:
+  standard: "ACDEFGHIKLMNPQRSTVWY"
+  special_tokens:
+    pad: "<PAD>"
+    start: "<SOS>"
+    end: "<EOS>"
+    unknown: "<UNK>"
