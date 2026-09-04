@@ -2,6 +2,7 @@
 Peptide Dataset classes for loading and processing peptide data
 """
 
+import logging
 import torch
 from torch.utils.data import Dataset
 from typing import List, Dict, Optional, Tuple, Union
@@ -10,6 +11,8 @@ import random
 
 from .vocabulary import VOCAB, PeptideVocabulary
 from .features import PeptideFeatureExtractor
+
+logger = logging.getLogger(__name__)
 
 
 class PeptideDataset(Dataset):
@@ -63,9 +66,11 @@ class PeptideDataset(Dataset):
                     
         self.has_labels = len(self.labels) > 0
         self.has_features = len(self.features) > 0
-        
-        print(f"Loaded {len(self.sequences)} sequences "
-              f"(filtered from {len(sequences)} by length [{min_length}, {max_length}])")
+
+        logger.info(
+            f"Loaded {len(self.sequences)} sequences "
+            f"(filtered from {len(sequences)} by length [{min_length}, {max_length}])"
+        )
         
     def __len__(self) -> int:
         return len(self.sequences)
@@ -258,7 +263,7 @@ class PeptideGenerationDataset(Dataset):
         # Actual max length for padding
         self.padded_length = max_length + 2  # +2 for SOS and EOS
         
-        print(f"Generation dataset: {len(self.sequences)} sequences")
+        logger.info(f"Generation dataset: {len(self.sequences)} sequences")
         
     def __len__(self) -> int:
         return len(self.sequences)
@@ -312,11 +317,11 @@ class ConditionalPeptideDataset(Dataset):
     Dataset for conditional peptide generation with features from CSV.
     Uses peptide properties as conditions for controlled generation.
     
-    Features used:
-        - instability_index: Protein stability metric (< 40 = stable)
-        - therapeutic_score: Therapeutic potential
-        - hemolytic_score: Toxicity indicator (lower = safer)
-        - aliphatic_index: Thermostability
+    Supported feature candidates:
+        - instability_index: empirical sequence-derived instability screen
+        - therapeutic_score: legacy dataset-supplied score (requires provenance)
+        - hemolytic_score: legacy dataset-supplied score (requires provenance)
+        - aliphatic_index: sequence-derived aliphatic index
         - hydrophobic_moment: Amphipathicity
         - gravy: Hydropathicity
         - charge_at_pH7: Net charge
@@ -357,6 +362,7 @@ class ConditionalPeptideDataset(Dataset):
         min_length: int = 5,
         normalize_features: bool = True,
         feature_names: Optional[List[str]] = None,
+        feature_stats: Optional[Dict[str, Dict[str, float]]] = None,
     ):
         """
         Initialize conditional dataset.
@@ -375,11 +381,15 @@ class ConditionalPeptideDataset(Dataset):
         self.max_length = max_length
         self.min_length = min_length
         self.normalize_features = normalize_features
-        self.feature_names = feature_names or self.CONDITION_FEATURES
+        self.feature_names = list(feature_names) if feature_names is not None else list(self.CONDITION_FEATURES)
         self.padded_length = max_length + 2  # +2 for SOS and EOS
 
-        # Instance-level copy of feature stats to avoid mutating class variable
-        self.feature_stats = dict(self.FEATURE_STATS)
+        # Validation/test/inference must reuse training statistics. Computing
+        # normalization independently for each split changes the meaning of C.
+        self.feature_stats = {
+            name: dict(values) for name, values in (feature_stats or self.FEATURE_STATS).items()
+        }
+        self._provided_feature_stats = feature_stats is not None
         
         # Filter by sequence length and store data
         self.sequences = []
@@ -396,12 +406,12 @@ class ConditionalPeptideDataset(Dataset):
         
         self.has_labels = len(self.labels) > 0
         
-        # Compute feature statistics from data
-        self._compute_feature_stats()
+        if not self._provided_feature_stats:
+            self._compute_feature_stats()
         
-        print(f"Conditional dataset: {len(self.sequences)} sequences")
-        print(f"  Features: {self.feature_names}")
-        print(f"  Feature dim: {len(self.feature_names)}")
+        logger.info(f"Conditional dataset: {len(self.sequences)} sequences")
+        logger.info(f"  Features: {self.feature_names}")
+        logger.info(f"  Feature dim: {len(self.feature_names)}")
         
     def _compute_feature_stats(self):
         """Compute mean and std for each feature from data."""
@@ -412,7 +422,9 @@ class ConditionalPeptideDataset(Dataset):
             if values:
                 self.feature_stats[feat_name] = {
                     'mean': float(np.mean(values)),
-                    'std': float(np.std(values)) + 1e-8  # Avoid division by zero
+                    'std': float(np.std(values)) + 1e-8,  # Avoid division by zero
+                    'min': float(np.min(values)),
+                    'max': float(np.max(values)),
                 }
         
     def _normalize_feature(self, value: float, feat_name: str) -> float:
@@ -496,6 +508,8 @@ class ConditionalPeptideDataset(Dataset):
         csv_path: Union[str, Path],
         sequence_col: str = 'sequence',
         label_col: str = 'label',
+        label_value: Optional[int] = None,
+        feature_names: Optional[List[str]] = None,
         **kwargs
     ) -> 'ConditionalPeptideDataset':
         """
@@ -505,6 +519,8 @@ class ConditionalPeptideDataset(Dataset):
             csv_path: Path to CSV file
             sequence_col: Column name for sequences
             label_col: Column name for labels
+            feature_names: Ordered condition columns. If supplied, every column
+                is required; otherwise the available legacy candidates are used.
             **kwargs: Additional arguments for __init__
             
         Returns:
@@ -514,18 +530,33 @@ class ConditionalPeptideDataset(Dataset):
         
         df = pd.read_csv(csv_path)
         
+        if label_value is not None:
+            if label_col not in df.columns:
+                raise ValueError(f"Cannot select label={label_value}: '{label_col}' is absent from {csv_path}")
+            df = df.loc[df[label_col] == label_value].copy()
+
         sequences = df[sequence_col].tolist()
         labels = df[label_col].tolist() if label_col in df.columns else None
         
         # Extract features
-        feature_cols = [col for col in cls.CONDITION_FEATURES if col in df.columns]
+        if feature_names is None:
+            feature_cols = [col for col in cls.CONDITION_FEATURES if col in df.columns]
+        else:
+            feature_cols = list(feature_names)
+            missing = [col for col in feature_cols if col not in df.columns]
+            if missing:
+                raise ValueError(f"{csv_path} is missing configured condition columns: {missing}")
+        if not feature_cols:
+            raise ValueError(f"{csv_path} provides no condition feature columns")
+        if df[feature_cols].isna().any().any():
+            raise ValueError(f"{csv_path} contains missing values in condition columns")
         features = []
         for _, row in df.iterrows():
             feat_dict = {col: float(row[col]) for col in feature_cols}
             features.append(feat_dict)
         
-        print(f"Loaded {len(sequences)} sequences from {csv_path}")
-        print(f"Available features: {feature_cols}")
+        logger.info(f"Loaded {len(sequences)} sequences from {csv_path}")
+        logger.info(f"Available features: {feature_cols}")
         
         return cls(
             sequences=sequences,
@@ -536,5 +567,7 @@ class ConditionalPeptideDataset(Dataset):
         )
     
     def get_feature_stats(self) -> Dict[str, Dict[str, float]]:
-        """Return feature statistics for reference."""
-        return {name: self.FEATURE_STATS.get(name, {}) for name in self.feature_names}
+        """Return computed feature statistics (mean/std from actual data)."""
+        # FIX: was returning class-level FEATURE_STATS defaults instead of
+        # the instance-level stats computed from the real data in _compute_feature_stats().
+        return {name: self.feature_stats.get(name, {}) for name in self.feature_names}

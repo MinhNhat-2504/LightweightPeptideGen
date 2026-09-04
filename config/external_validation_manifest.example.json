@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "generated_fasta_dir": "../results/ablations/full/gen",
+  "expected_seeds": [42, 123, 456, 789, 1337],
+  "expected_sequences_per_seed": 1000,
+  "expected_models": ["full"],
+  "validators": [
+    {
+      "name": "amPEPpy",
+      "version": "REPLACE_WITH_EXACT_VERSION",
+      "task": "AMP activity prediction",
+      "citation": "REPLACE_WITH_DOI_OR_URL",
+      "command_or_service": "REPLACE_WITH_EXACT_COMMAND_OR_SERVER_SETTINGS",
+      "run_date": "REPLACE_WITH_YYYY-MM-DD",
+      "training_data_or_independence_statement": "REPLACE_WITH_DOCUMENTED_INDEPENDENCE_CHECK",
+      "used_for_training": false,
+      "threshold": 0.5,
+      "positive_direction": "higher",
+      "sequence_column": "sequence",
+      "score_column": "score",
+      "outputs": {
+        "full_seed42": "../results/external/ampeppy/full_seed42.csv",
+        "full_seed123": "../results/external/ampeppy/full_seed123.csv",
+        "full_seed456": "../results/external/ampeppy/full_seed456.csv",
+        "full_seed789": "../results/external/ampeppy/full_seed789.csv",
+        "full_seed1337": "../results/external/ampeppy/full_seed1337.csv"
+      }
+    },
+    {
+      "name": "ToxinPred3",
+      "version": "REPLACE_WITH_EXACT_VERSION_OR_ACCESS_DATE",
+      "task": "general toxicity prediction (not hemolysis)",
+      "citation": "REPLACE_WITH_DOI_OR_URL",
+      "command_or_service": "REPLACE_WITH_EXACT_SERVER_SETTINGS",
+      "run_date": "REPLACE_WITH_YYYY-MM-DD",
+      "training_data_or_independence_statement": "REPLACE_WITH_DOCUMENTED_INDEPENDENCE_CHECK",
+      "used_for_training": false,
+      "threshold": 0.5,
+      "positive_direction": "higher",
+      "sequence_column": "sequence",
+      "score_column": "toxicity_score",
+      "outputs": {
+        "full_seed42": "../results/external/toxinpred3/full_seed42.csv",
+        "full_seed123": "../results/external/toxinpred3/full_seed123.csv",
+        "full_seed456": "../results/external/toxinpred3/full_seed456.csv",
+        "full_seed789": "../results/external/toxinpred3/full_seed789.csv",
+        "full_seed1337": "../results/external/toxinpred3/full_seed1337.csv"
+      }
+    },
+    {
+      "name": "REPLACE_WITH_HEMOLYSIS_SPECIFIC_PREDICTOR",
+      "version": "REPLACE_WITH_EXACT_VERSION_OR_ACCESS_DATE",
+      "task": "hemolysis prediction",
+      "citation": "REPLACE_WITH_DOI_OR_URL",
+      "command_or_service": "REPLACE_WITH_EXACT_COMMAND_OR_SERVER_SETTINGS",
+      "run_date": "REPLACE_WITH_YYYY-MM-DD",
+      "training_data_or_independence_statement": "REPLACE_WITH_DOCUMENTED_INDEPENDENCE_CHECK",
+      "used_for_training": false,
+      "threshold": 0.5,
+      "positive_direction": "higher",
+      "sequence_column": "sequence",
+      "score_column": "hemolysis_score",
+      "outputs": {
+        "full_seed42": "../results/external/hemolysis/full_seed42.csv",
+        "full_seed123": "../results/external/hemolysis/full_seed123.csv",
+        "full_seed456": "../results/external/hemolysis/full_seed456.csv",
+        "full_seed789": "../results/external/hemolysis/full_seed789.csv",
+        "full_seed1337": "../results/external/hemolysis/full_seed1337.csv"
+      }
+    }
+  ]
+}

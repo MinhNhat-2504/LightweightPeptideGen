@@ -21,7 +21,7 @@ def test_esm2_embedder():
     print("=" * 60)
     
     try:
-        from src.models.esm2_embedder import ESM2Embedder, load_esm2_embedder
+        from peptidegen.models.esm2_embedder import ESM2Embedder, load_esm2_embedder
         
         # Test sequences
         sequences = [
@@ -61,15 +61,17 @@ def test_esm2_embedder():
         # Test simple interface
         seq_embeds = embedder.embed_sequences(sequences)
         print(f"\nSimple embed_sequences shape: {seq_embeds.shape}")
+        assert output['embeddings'].shape[0] == len(sequences)
+        assert output['token_embeddings'].shape[0] == len(sequences)
+        assert seq_embeds.shape[0] == len(sequences)
         
         print("\n✅ ESM2 Embedder test PASSED")
-        return True
         
     except Exception as e:
         print(f"\n❌ ESM2 Embedder test FAILED: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 
 def test_esm2_structure_evaluator():
@@ -79,7 +81,7 @@ def test_esm2_structure_evaluator():
     print("=" * 60)
     
     try:
-        from src.models.esm2_embedder import ESM2StructureEvaluator
+        from peptidegen.models.esm2_embedder import ESM2StructureEvaluator
         
         sequences = [
             "MKLLVVAALVFAAGHA",
@@ -103,24 +105,22 @@ def test_esm2_structure_evaluator():
         evaluator = evaluator.to(device)
         
         # Forward pass
-        output = evaluator(sequences)
+        output = evaluator(sequences, return_features=True)
         
         print(f"\nOutput keys: {list(output.keys())}")
-        print(f"Structure scores shape: {output['structure_scores'].shape}")
+        print(f"Legacy proxy scores shape: {output['stability_score'].shape}")
         print(f"GAT features shape: {output['gat_features'].shape}")
-        
-        # Test evaluation method
-        scores = evaluator.evaluate_batch(sequences)
-        print(f"\nBatch evaluation shape: {scores.shape}")
+
+        assert output['stability_score'].shape[0] == len(sequences)
+        assert output['gat_features'].shape[0] == len(sequences)
         
         print("\n✅ ESM2 Structure Evaluator test PASSED")
-        return True
         
     except Exception as e:
         print(f"\n❌ ESM2 Structure Evaluator test FAILED: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 
 def test_esm2_generator():
@@ -130,8 +130,8 @@ def test_esm2_generator():
     print("=" * 60)
     
     try:
-        from src.models.esm2_generator import ESM2ConditionedGenerator
-        from src.data.vocabulary import VOCAB
+        from peptidegen.models.esm2_generator import ESM2ConditionedGenerator
+        from peptidegen.data.vocabulary import VOCAB
         
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
@@ -162,40 +162,36 @@ def test_esm2_generator():
         output = generator(z)
         
         print(f"\nOutput keys: {list(output.keys())}")
-        print(f"Generated tokens shape: {output['tokens'].shape}")
+        print(f"Generated tokens shape: {output['sequences'].shape}")
         print(f"Logits shape: {output['logits'].shape}")
         
         # Decode sequences
-        tokens = output['tokens']
+        tokens = output['sequences']
         seqs = [VOCAB.decode(t.tolist()) for t in tokens]
         print(f"\nGenerated sequences:")
         for i, seq in enumerate(seqs):
             print(f"  {i+1}. {seq[:30]}...")
+        assert output['sequences'].shape[0] == batch_size
+        assert output['logits'].shape[0] == batch_size
         
         print("\n✅ ESM2 Conditioned Generator test PASSED")
-        return True
         
     except Exception as e:
         print(f"\n❌ ESM2 Conditioned Generator test FAILED: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 
 if __name__ == '__main__':
-    results = []
-    results.append(test_esm2_embedder())
-    results.append(test_esm2_structure_evaluator())
-    results.append(test_esm2_generator())
+    test_esm2_embedder()
+    test_esm2_structure_evaluator()
+    test_esm2_generator()
     
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    print(f"ESM2 Embedder: {'✅ PASSED' if results[0] else '❌ FAILED'}")
-    print(f"ESM2 Structure Evaluator: {'✅ PASSED' if results[1] else '❌ FAILED'}")
-    print(f"ESM2 Generator: {'✅ PASSED' if results[2] else '❌ FAILED'}")
-    
-    if all(results):
-        print("\n🎉 ALL TESTS PASSED!")
-    else:
-        print(f"\n⚠️ {sum(results)}/{len(results)} tests passed")
+    print("ESM2 Embedder: ✅ PASSED")
+    print("ESM2 Structure Evaluator: ✅ PASSED")
+    print("ESM2 Generator: ✅ PASSED")
+    print("\n🎉 ALL TESTS PASSED!")

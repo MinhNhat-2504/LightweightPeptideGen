@@ -54,6 +54,7 @@ def get_dataloaders(
         max_length=max_seq_length,
         min_length=min_seq_length,
         normalize_features=True,
+        feature_stats=train_dataset.get_feature_stats(),
     )
 
     if max_samples and max_samples > 0:

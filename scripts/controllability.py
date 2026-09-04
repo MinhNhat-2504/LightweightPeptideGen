@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 from peptidegen.inference import PeptideSampler
 from peptidegen.evaluation.controllability import ControllabilityEvaluator, MEASURE
+from peptidegen.utils import set_seed
 
 
 def main():
@@ -41,13 +42,18 @@ def main():
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--top-p", type=float, default=0.9)
     ap.add_argument("--out", default="results/controllability.json")
+    ap.add_argument("--seed", type=int, required=True,
+                    help="independent training/generation seed represented by the checkpoint")
     args = ap.parse_args()
+
+    set_seed(args.seed)
 
     sampler = PeptideSampler.from_checkpoint(args.checkpoint)
     ce = ControllabilityEvaluator.from_train_csv(sampler, args.train_csv)
 
     report = ce.sweep_all(features=args.features, n_per=args.n_per,
                           temperature=args.temperature, top_p=args.top_p)
+    report["seed"] = args.seed
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w") as f:
@@ -56,7 +62,7 @@ def main():
 
     print("\n=== Controllability (target -> achieved) ===")
     print(f"{'feature':22s} {'Spearman':>9s} {'Pearson':>9s} {'MAE':>10s}")
-    for feat, r in report.items():
+    for feat, r in report["results"].items():
         sp = r.get("spearman", float("nan"))
         pe = r.get("pearson", float("nan"))
         mae = r.get("mae", float("nan"))

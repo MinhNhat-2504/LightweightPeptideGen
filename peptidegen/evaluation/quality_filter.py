@@ -1,11 +1,9 @@
 """
-Quality Filtering for Generated Peptides.
+Legacy heuristic filtering for generated peptides.
 
-Filters peptides based on:
-1. Stability: instability_index < 40
-2. Therapeutic potential: therapeutic_score > threshold
-3. Safety: hemolytic_score < threshold
-4. Structural properties: aliphatic_index, hydrophobic_moment, etc.
+This module is retained for backward-compatible exploratory use only. Its
+heuristic scores are not accepted by the major-revision artifact pipeline as
+evidence of activity, toxicity, hemolysis, safety, or physical stability.
 """
 
 import torch

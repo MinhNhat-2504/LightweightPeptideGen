@@ -9,7 +9,10 @@ Usage:
 """
 
 import argparse
+import hashlib
 import logging
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 import torch
@@ -34,9 +37,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from peptidegen.utils import load_config, set_seed, get_device
-from peptidegen.data import ConditionalPeptideDataset, get_dataloader, VOCAB
+from peptidegen.data import ConditionalPeptideDataset, get_dataloader, VOCAB, validate_dataset_build
 from peptidegen.models import GRUGenerator, CNNDiscriminator, MultimodalFusionGenerator
 from peptidegen.training import GANTrainer, ConditionalGANTrainer
+
+
+def git_state():
+    try:
+        commit = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        dirty = bool(subprocess.run(
+            ['git', 'status', '--porcelain'], check=True, capture_output=True, text=True
+        ).stdout.strip())
+        return {'commit': commit, 'dirty_worktree': dirty}
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {'commit': None, 'dirty_worktree': None}
 
 
 def detect_checkpoint_architecture(ckpt: dict) -> dict:
@@ -98,6 +114,16 @@ def main():
     parser.add_argument('--fresh-optimizer', action='store_true',
                         help='Load model weights only; skip optimizer/scaler state '
                              '(use this to recover from corrupted optimizer state after NaN runs)')
+    parser.add_argument('--all-labels', action='store_true',
+                        help='train the generator on all labels (diagnostic only; default uses AMP label=1)')
+    parser.add_argument('--dataset-report', default=None,
+                        help='auditable dataset_build_report.json (default: beside train CSV)')
+    parser.add_argument('--allow-unverified-data', action='store_true',
+                        help='smoke-test only: continue without a valid dataset build report')
+    parser.add_argument('--fusion-type', choices=['cross_attention', 'concat', 'none'], default=None)
+    parser.add_argument('--no-gat', action='store_true')
+    parser.add_argument('--gan-loss', choices=['bce', 'wgan_gp'], default=None)
+    parser.add_argument('--discrete-relaxation', choices=['softmax', 'gumbel'], default=None)
     args = parser.parse_args()
 
     # Config
@@ -110,6 +136,14 @@ def main():
     if args.g_steps is not None:
         training_cfg['g_steps'] = args.g_steps
         logger.info(f"Override g_steps -> {args.g_steps}")
+    if args.gan_loss is not None:
+        training_cfg['gan_loss'] = args.gan_loss
+    if args.discrete_relaxation is not None:
+        training_cfg['discrete_relaxation'] = args.discrete_relaxation
+    if args.fusion_type is not None:
+        model_cfg['fusion_type'] = args.fusion_type
+    if args.no_gat:
+        model_cfg['use_gat'] = False
     device_cfg = config.get('device', {})
 
     set_seed(args.seed)
@@ -126,16 +160,31 @@ def main():
     # =========================================================================
     train_csv = data_cfg.get('train_csv', 'dataset/train.csv')
     val_csv = data_cfg.get('val_csv', 'dataset/val.csv')
+    test_csv = data_cfg.get('test_csv', 'dataset/test.csv')
+    dataset_audit = None
+    try:
+        dataset_audit = validate_dataset_build(
+            train_csv, val_csv, test_csv, report_path=args.dataset_report
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        if not args.allow_unverified_data:
+            parser.error(str(exc))
+        logger.warning("UNVERIFIED DATA smoke-test mode: %s", exc)
 
     train_dataset = ConditionalPeptideDataset.from_csv(
         train_csv,
+        label_value=None if args.all_labels else 1,
+        feature_names=data_cfg.get('condition_features'),
         max_length=data_cfg.get('max_seq_length', 50),
         min_length=data_cfg.get('min_seq_length', 5)
     )
     val_dataset = ConditionalPeptideDataset.from_csv(
         val_csv,
+        label_value=None if args.all_labels else 1,
+        feature_names=data_cfg.get('condition_features'),
         max_length=data_cfg.get('max_seq_length', 50),
-        min_length=data_cfg.get('min_seq_length', 5)
+        min_length=data_cfg.get('min_seq_length', 5),
+        feature_stats=train_dataset.get_feature_stats(),
     )
 
     # Optional subset for quick smoke runs
@@ -150,6 +199,12 @@ def main():
         logger.info(f"Subset for quick run: train={len(train_dataset)}, val={len(val_dataset)}")
 
     condition_dim = train_dataset.get_condition_dim() if args.conditional else 0
+    configured_condition_dim = config.get('generator', {}).get('condition_dim')
+    if args.conditional and configured_condition_dim is not None and configured_condition_dim != condition_dim:
+        parser.error(
+            f"generator.condition_dim={configured_condition_dim} conflicts with the "
+            f"{condition_dim} configured condition_features"
+        )
 
     # Batch size: CLI > config
     batch_size = args.batch_size or training_cfg.get('batch_size', 1024)
@@ -197,7 +252,8 @@ def main():
                             'latent_dim', 'max_length', 'dropout',
                             # carry fusion-generator architecture so a MLE warm-up
                             # checkpoint (with ESM refinement) loads in full
-                            'esm_dim', 'mem_tokens', 'num_heads'):
+                            'esm_dim', 'mem_tokens', 'num_heads', 'gat_heads',
+                            'gat_window', 'use_gat', 'fusion_type'):
                     if key in saved_model_cfg:
                         model_cfg[key] = saved_model_cfg[key]
                 if saved_model_cfg.get('condition_dim') is not None:
@@ -244,6 +300,13 @@ def main():
 
     effective_condition_dim = resume_condition_dim if resume_condition_dim > 0 else None
 
+    # Re-apply explicit architectural CLI overrides after checkpoint metadata
+    # has been read. This makes ablation commands authoritative.
+    if args.fusion_type is not None:
+        model_cfg['fusion_type'] = args.fusion_type
+    if args.no_gat:
+        model_cfg['use_gat'] = False
+
     # Generator architecture selection.
     #   model.architecture: "fusion" (default) -> MultimodalFusionGenerator
     #                       "gru"               -> legacy GRUGenerator (ablation)
@@ -260,11 +323,14 @@ def main():
             latent_dim=model_cfg.get('latent_dim', 128),
             max_length=data_cfg.get('max_seq_length', 50),
             num_layers=model_cfg.get('num_layers', 3),
-            num_heads=gen_cfg.get('num_heads', 4),
+            num_heads=model_cfg.get('num_heads', gen_cfg.get('num_heads', 4)),
             dropout=model_cfg.get('dropout', 0.2),
-            condition_dim=effective_condition_dim or (8 if args.conditional else None),
+            condition_dim=effective_condition_dim,
             mem_tokens=model_cfg.get('mem_tokens', 16),
-            gat_heads=config.get('structure_evaluator', {}).get('gat_heads', 4),
+            gat_heads=model_cfg.get('gat_heads', config.get('structure_evaluator', {}).get('gat_heads', 4)),
+            gat_window=model_cfg.get('gat_window', 3),
+            use_gat=model_cfg.get('use_gat', True),
+            fusion_type=model_cfg.get('fusion_type', 'cross_attention'),
             # esm_dim: keep the ESM refinement pathway in the architecture so a
             # checkpoint warm-started by scripts/mle_warmup.py loads in full.
             # Set model.esm_dim in config to the ESM-2 embed dim used for warm-up
@@ -313,14 +379,48 @@ def main():
         device=device,
     )
     if args.conditional:
-        trainer_kwargs['condition_dim'] = resume_condition_dim if resume_condition_dim > 0 else 8
+        trainer_kwargs['condition_dim'] = resume_condition_dim
 
     trainer = TrainerClass(**trainer_kwargs)
+    trainer.data_metadata = {
+        'generator_label_filter': None if args.all_labels else 1,
+        'train_csv': str(Path(train_csv).resolve()),
+        'val_csv': str(Path(val_csv).resolve()),
+        'train': {
+            'path': str(Path(train_csv).resolve()),
+            'sha256': hashlib.sha256(Path(train_csv).read_bytes()).hexdigest(),
+        },
+        'validation': {
+            'path': str(Path(val_csv).resolve()),
+            'sha256': hashlib.sha256(Path(val_csv).read_bytes()).hexdigest(),
+        },
+        'condition_feature_names': list(train_dataset.feature_names),
+        'condition_feature_stats': train_dataset.get_feature_stats(),
+        'dataset_build_audit': dataset_audit,
+        'reportable_data': dataset_audit is not None,
+    }
 
     start_epoch = 0
+    parent_reportable = False
+    parent_feature_extractor = None
     if args.resume:
         load_opt = not getattr(args, 'fresh_optimizer', False)
-        start_epoch = trainer.load(args.resume, load_optimizer=load_opt) + 1
+        loaded_epoch = trainer.load(args.resume, load_optimizer=load_opt)
+        resume_payload = torch.load(args.resume, map_location='cpu')
+        parent_reportable = resume_payload.get('artifact_reportable') is True
+        parent_feature_extractor = (
+            (resume_payload.get('data_metadata') or {}).get('esm_feature_extractor')
+        )
+        if not parent_reportable and not args.allow_unverified_data:
+            parser.error(
+                f"parent checkpoint is not marked artifact_reportable: {args.resume}. "
+                "Use --allow-unverified-data only for a smoke test."
+            )
+        # MLE warm-up epochs are a different training phase and must not skip
+        # GAN epoch zero. Ordinary GAN checkpoints resume at the next epoch.
+        start_epoch = 0 if resume_payload.get('warmup') else loaded_epoch + 1
+        if resume_payload.get('warmup'):
+            trainer.history = []
         if not load_opt:
             logger.info("Fresh optimizer mode: optimizer and AMP scaler re-initialized")
         trainer.epoch = start_epoch  # Ensure fit() starts from next epoch
@@ -337,6 +437,52 @@ def main():
                        f"Will train {epochs} additional epochs from epoch {start_epoch}.")
         epochs = start_epoch + epochs
 
+    config_path = Path(args.config)
+    parent_record = None
+    if args.resume:
+        parent_path = Path(args.resume)
+        parent_record = {
+            'path': str(parent_path.resolve()),
+            'sha256': hashlib.sha256(parent_path.read_bytes()).hexdigest(),
+        }
+    trainer.run_metadata = {
+        'command': shlex.join(sys.argv),
+        'seed': args.seed,
+        'config_path': str(config_path.resolve()),
+        'config_sha256': hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        'parent_checkpoint': parent_record,
+        'requested_total_epochs': epochs,
+        'conditional': args.conditional,
+        'all_labels': args.all_labels,
+        'architecture_overrides': {
+            'fusion_type': args.fusion_type,
+            'no_gat': args.no_gat,
+            'gan_loss': args.gan_loss,
+            'discrete_relaxation': args.discrete_relaxation,
+        },
+    }
+    git = git_state()
+    parent_commit = (
+        ((resume_payload.get('run_metadata') or {}).get('git') or {}).get('commit')
+        if args.resume else None
+    )
+    artifact_reportable = bool(
+        dataset_audit is not None
+        and args.max_samples is None
+        and args.resume
+        and parent_reportable
+        and parent_commit == git.get('commit')
+        and git.get('commit')
+        and git.get('dirty_worktree') is False
+    )
+    trainer.run_metadata.update({
+        'git': git,
+        'artifact_reportable': artifact_reportable,
+        'parent_code_commit': parent_commit,
+    })
+    trainer.data_metadata['esm_feature_extractor'] = parent_feature_extractor
+    trainer.artifact_reportable = artifact_reportable
+
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
@@ -351,7 +497,11 @@ def main():
     logger.info("=" * 60)
 
     # Early stopping: nếu có val_loader thì dùng val_g_loss, nếu không thì g_loss
-    early_stopping_metric = 'val_g_loss' if val_loader is not None else 'g_loss'
+    early_stopping_metric = (
+        'val_loss_reconstruction'
+        if val_loader is not None and training_cfg.get('reconstruction_weight', 0) > 0
+        else ('val_g_loss' if val_loader is not None else 'g_loss')
+    )
     trainer.fit(
         train_loader=train_loader,
         val_loader=val_loader,

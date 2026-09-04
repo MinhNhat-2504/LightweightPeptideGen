@@ -1,15 +1,11 @@
 # LightweightPeptideGen
 
-Mô hình sinh peptide kháng khuẩn (AMP) *de novo* theo hướng **nhẹ và đa phương thức**: một
-GAN chỉ khoảng **1.5M tham số hoạt động** nhưng vẫn kết hợp được thông tin ngữ nghĩa từ
-protein language model (ESM-2) và thông tin cấu trúc từ đồ thị tiếp xúc giữa các residue.
+Mô hình sinh peptide kháng khuẩn (AMP) *de novo* theo hướng nhẹ và đa phương thức.
 
-Điểm chính của repo này là chứng minh rằng **không cần một mô hình khổng lồ** để sinh ra
-peptide vừa hợp lệ về mặt sinh hoá, vừa ổn định cấu trúc, vừa điều khiển được theo các
-đặc trưng lý hoá mong muốn.
-
-> **Trạng thái:** bài báo mô tả phương pháp này hiện **đang trong quá trình bình duyệt**.
-> Phần trích dẫn sẽ được bổ sung khi bài được chấp nhận đăng. Repo này chỉ chứa mã nguồn.
+> **MAJOR-REVISION AUDIT:** các kết quả số cũ không đủ provenance và không được dùng để
+> submit. Cấu hình được khóa cho revision là `config/revision.yaml`; dữ liệu phải được
+> dựng lại bằng manifest và homology clusters trước khi chạy
+> `run_revision_experiments.sh`.
 
 ---
 
@@ -29,10 +25,11 @@ H_fusion = softmax( (H_seq · W_Q)(H_graph · W_K)ᵀ / √d ) (H_graph · W_V)
 
 - `H_seq` — luồng ngữ nghĩa, lấy từ embedding token của **ESM-2** (đóng băng, chỉ dùng
   làm đặc trưng nên không kéo backbone nặng vào autograd).
-- `H_graph` — luồng cấu trúc, lấy từ **GATv2** chạy trên đồ thị tiếp xúc KNN < 8 Å giữa
-  các residue.
+- `H_graph` — trong warm-up, GATv2 chạy trên adjacency suy ra từ attention của ESM-2;
+  trong de novo inference, nó chạy trên đồ thị local cố định của latent memory tokens.
+  Không có C-alpha contact graph ở runtime.
 
-Vector nhiễu `z` và vector điều kiện lý hoá 8 chiều `C` cũng được nạp qua chính bộ dựng
+Vector nhiễu `z` và vector điều kiện lý hoá 6 chiều `C` cũng được nạp qua chính bộ dựng
 memory này, nên đường sinh *de novo* (không có chuỗi đầu vào) và đường teacher-forcing
 dùng chung một backbone.
 
@@ -124,16 +121,30 @@ dataset/
 └── test.csv  / test.fasta
 ```
 
-File CSV cần có cột `sequence`, `label` (1 = AMP, 0 = không phải AMP) và các cột đặc trưng
-lý hoá. Danh sách đầy đủ nằm trong [`dataset/feature_config.json`](dataset/feature_config.json);
-tám cột được dùng làm **vector điều kiện** cho generator là:
+Không dùng lại `dataset/train.csv`, `val.csv`, `test.csv` cũ cho kết quả báo cáo.
+Revision dùng quy trình hai giai đoạn. Manifest phải khai báo SHA-256 của từng
+source, định nghĩa nhãn/evidence và lệnh/phiên bản homology clustering. Giai đoạn
+đầu xuất FASTA đã lọc và exact-deduplicate; sau khi chạy MMseqs2, giai đoạn hai
+tạo `dataset/rebuilt/` gồm fixed splits, FASTA, row-level provenance ledger và
+`dataset_build_report.json` có hash. Các đường dẫn trong report là tương đối với
+thư mục chứa report để toàn bộ artifact vẫn kiểm chứng được sau khi chuyển máy.
 
-`instability_index`, `therapeutic_score`, `hemolytic_score`, `aliphatic_index`,
-`hydrophobic_moment`, `gravy`, `charge_at_pH7`, `aromaticity`
+```bash
+python -m peptidegen.data --manifest config/dataset_manifest.json \
+  --prepare-clustering-fasta dataset/clustering_input.fasta
 
-Quy mô bộ dữ liệu gốc dùng trong bài báo (cân bằng 1:1) được ghi ở
-[`dataset/dataset_statistics.json`](dataset/dataset_statistics.json): 129.121 mẫu train /
-27.669 val / 27.670 test.
+mmseqs easy-cluster dataset/clustering_input.fasta dataset/mmseqs \
+  dataset/mmseqs_tmp --min-seq-id 0.4 -c 0.8 --cov-mode 0
+
+python -m peptidegen.data --manifest config/dataset_manifest.json \
+  --cluster-tsv dataset/mmseqs_cluster.tsv --cluster-format mmseqs_rep_member \
+  --output-dir dataset/rebuilt
+```
+
+Sáu biến điều kiện được tính lại trực tiếp từ chuỗi bằng cùng một implementation:
+`instability_index`, `aliphatic_index`, `hydrophobic_moment`, `gravy`,
+`charge_at_pH7`, `aromaticity`. Hai proxy cũ `therapeutic_score` và
+`hemolytic_score` bị loại vì chưa có định nghĩa/provenance kiểm chứng được.
 
 ---
 
@@ -142,13 +153,14 @@ Quy mô bộ dữ liệu gốc dùng trong bài báo (cân bằng 1:1) được 
 Trước khi chạy thật, nên chạy thử với dữ liệu cắt nhỏ để chắc chắn không có gì gãy:
 
 ```bash
-python scripts/mle_warmup.py --config config/config.yaml --conditional \
+python scripts/mle_warmup.py --config config/revision.yaml --conditional \
   --esm-model esm2_t6_8M_UR50D --epochs 1 --max-samples 2000 --out checkpoints/warmup.pt
 
-python train.py --config config/config.yaml --conditional \
+python train.py --config config/revision.yaml --conditional \
   --resume checkpoints/warmup.pt --epochs 1 --batch-size 32 --max-samples 2000
 
-python generate.py --checkpoint checkpoints/best_model.pt --num 50 -o test.fasta
+python generate.py --checkpoint checkpoints/best_model.pt --model-id exploratory \
+  --num 50 -o test.fasta
 ```
 
 Hoặc dùng luôn bộ test có sẵn:
@@ -163,14 +175,15 @@ pytest tests/ -q
 
 ```bash
 # Linux / Colab
-ESM=esm2_t33_650M_UR50D EPOCHS=40 GSTEPS=4 BATCH=64 bash run_all.sh
+PYTHON_BIN=python bash run_revision_experiments.sh
 
 # Windows
 .\run_all.ps1
 ```
 
-Script sẽ chạy tuần tự: warm-up → GAN → huấn luyện oracle AMP → SCST → sinh 5 seed →
-đánh giá → đo tính điều khiển được → báo cáo số tham số. Kết quả đổ vào `results/*.json`.
+Script revision yêu cầu dataset build report và hai reward-oracle checkpoint đã audit,
+sau đó chạy full model cùng ma trận ablation trên 5 training seeds. External predictors
+và ESMFold chạy/import riêng vì cần phần mềm/dịch vụ và GPU khác.
 
 Các biến môi trường điều chỉnh được: `ESM`, `EPOCHS`, `GSTEPS`, `BATCH`, `NUM_GEN`,
 `SCST_STEPS`, `WARMUP_EPOCHS`.
@@ -189,11 +202,12 @@ dán vào notebook, kèm cách trỏ `checkpoints/` sang Drive để resume khi 
 | Oracle AMP | `scripts/train_oracle.py amp --train ... --test ...` | ESM-2 + logistic regression, báo AUC trên test |
 | Oracle hemolysis | `scripts/train_oracle.py hemo --train ... --test ...` | Cần nhãn ngoài (HemoPI / DBAASP) |
 | SCST | `scripts/scst_finetune.py --checkpoint ... --amp-oracle ... --entropy-coef 0.02` | Tinh chỉnh RL đa mục tiêu |
-| Sinh chuỗi | `generate.py --checkpoint checkpoints/scst_model.pt --num 1000 --seed 42` | Xuất FASTA |
-| Đánh giá | `scripts/evaluate_generated.py --gen-dir results/gen --foldability` | Gộp nhiều seed, báo mean±std + kiểm định thống kê |
+| Sinh chuỗi | `generate.py --checkpoint checkpoints/scst_model.pt --model-id full --num 1000 --seed 42` | Xuất FASTA + provenance sidecar |
+| Đánh giá | `scripts/evaluate_generated.py --gen-dir ... --train-fasta dataset/rebuilt/train.fasta --sequence-plausibility` | Gộp nhiều seed, báo mean±SD/CI + kiểm định thống kê |
 | Điều khiển được | `scripts/controllability.py --checkpoint ... --features ...` | Quét giá trị mục tiêu, đo Spearman/Pearson/MAE |
 | Độ mới | `scripts/novelty.py --gen-dir results/gen` | So khớp chính xác + khoảng cách Levenshtein với tập train |
 | Đếm tham số | `scripts/backbone_ablation.py params` | Báo số tham số hoạt động thực tế |
+| Xuất bảng paper | `scripts/export_verified_manuscript_tables.py --paper-dir ...` | Chỉ mở khóa bảng khi toàn bộ artifact audit đã pass |
 
 Hai script chạy trên Colab/GPU lớn: [`scripts/esmfold_plddt.py`](scripts/esmfold_plddt.py)
 (pLDDT bằng ESMFold) và [`scripts/esmfold_contacts.py`](scripts/esmfold_contacts.py)
@@ -203,8 +217,11 @@ Hai script chạy trên Colab/GPU lớn: [`scripts/esmfold_plddt.py`](scripts/es
 
 ## So sánh với baseline
 
-Ba baseline được cài lại trong repo, dùng **chung một giao thức đánh giá** với mô hình đề
-xuất (cùng tập dữ liệu, cùng số seed, cùng bộ metric):
+Các module `hydramp` và `m3cad` trong repo chỉ là **architecture-inspired controls**,
+không phải reproduction chính thức; riêng M3CAD-inspired không có nhánh voxel 3D của
+bài báo. Không được ghi tên chúng là HydrAMP/M3-CAD trong bảng so sánh trực tiếp. Muốn
+claim official retraining phải chạy repository/weights chính thức và lưu commit, môi
+trường, preprocessing, checkpoint-selection và raw outputs.
 
 ```bash
 python baselines/train_baseline.py --model hydramp --epochs 50
@@ -215,10 +232,9 @@ python scripts/evaluate_generated.py --gen-dir results/gen --amp-oracle results/
 
 Thay `hydramp` bằng `m3cad` hoặc `esm2gen` cho hai baseline còn lại.
 
-> ⚠️ **Về chỉ số AMP-probability:** oracle dùng để chấm điểm cũng chính là oracle được
-> dùng làm reward cho SCST. Con số này vì thế **có tính vòng tròn** và không nên đọc như
-> một so sánh công bằng — đây là hạn chế đã biết, đã ghi rõ trong bài báo. Các chỉ số còn
-> lại (độ ổn định, đa dạng, pseudo-perplexity, novelty) thì không bị vấn đề này.
+> AMP reward-oracle score chỉ là training diagnostic. Independent AMP, general toxicity
+> và hemolysis-specific prediction phải được import bằng manifest và không được dùng
+> trong training, model selection hoặc tuning.
 
 ---
 

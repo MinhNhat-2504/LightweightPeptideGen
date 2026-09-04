@@ -14,9 +14,13 @@ figures/
 # ---------------------------------------------------------------------------
 dataset/*.csv
 dataset/*.fasta
+dataset/raw/
+dataset/rebuilt/
+dataset/amps_pdb/
 checkpoints/
 results/
 logs/
+config/release_manifest.json
 baselines/logs/
 *.pt
 *.pth

@@ -2,15 +2,15 @@
 Models for Lightweight Peptide Generation
 """
 
-from .generator import PeptideGenerator, GRUGenerator, LSTMGenerator, TransformerGenerator
+from .generator import PeptideGenerator, GRUGenerator
 from .fusion_generator import (
     MultimodalFusionGenerator,
     CrossAttentionFusion,
     DenseGATv2Layer,
 )
 from .discriminator import (
-    PeptideDiscriminator, 
-    CNNDiscriminator, 
+    PeptideDiscriminator,
+    CNNDiscriminator,
     RNNDiscriminator,
     HybridDiscriminator,
 )
@@ -33,9 +33,9 @@ from .feature_loss import (
 # ESM2 imports (optional - may not be installed)
 try:
     from .esm2_embedder import (
-        ESM2Embedder, 
-        ESM2StructureEvaluator, 
-        LightweightESMProjector, 
+        ESM2Embedder,
+        ESM2StructureEvaluator,
+        LightweightESMProjector,
         load_esm2_embedder,
     )
     from .esm2_generator import ESM2ConditionedGenerator, ESM2GuidedDiscriminator
@@ -50,11 +50,9 @@ except ImportError:
     HAS_ESM2 = False
 
 __all__ = [
-    # Generators
+    # Generators (LSTMGenerator and TransformerGenerator removed — dead code)
     'PeptideGenerator',
     'GRUGenerator',
-    'LSTMGenerator',
-    'TransformerGenerator',
     'MultimodalFusionGenerator',
     'CrossAttentionFusion',
     'DenseGATv2Layer',

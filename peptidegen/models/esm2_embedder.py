@@ -360,7 +360,10 @@ class ESM2StructureEvaluator(nn.Module):
         return_features: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
-        Evaluate structural stability of peptide sequences.
+        Produce a legacy learned proxy score from sequence-derived features.
+
+        This output is not a thermodynamic or experimental stability measure
+        and is excluded from the reportable revision evaluation.
         
         Args:
             sequences: List of peptide sequences

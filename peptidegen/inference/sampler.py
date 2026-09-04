@@ -44,6 +44,8 @@ class PeptideSampler:
         self.G = generator.to(self.device)
         self.G.eval()
         self.vocab = vocab or VOCAB
+        self.checkpoint_path = None
+        self.checkpoint_metadata = {}
         
     @classmethod
     def from_checkpoint(
@@ -99,6 +101,10 @@ class PeptideSampler:
                     'condition_dim': model_cfg.get('condition_dim'),
                     'mem_tokens': model_cfg.get('mem_tokens', 16),
                     'esm_dim': model_cfg.get('esm_dim'),
+                    'gat_heads': model_cfg.get('gat_heads', 4),
+                    'gat_window': model_cfg.get('gat_window', 3),
+                    'use_gat': model_cfg.get('use_gat', True),
+                    'fusion_type': model_cfg.get('fusion_type', 'cross_attention'),
                 }
             else:
                 generator_kwargs = {
@@ -117,7 +123,21 @@ class PeptideSampler:
         generator = generator_class(**generator_kwargs)
         generator.load_state_dict(ckpt['generator'])
         
-        return cls(generator, device)
+        sampler = cls(generator, device)
+        sampler.checkpoint_path = str(Path(checkpoint_path).resolve())
+        # Keep non-tensor provenance/configuration fields available to
+        # downstream evaluators without exposing or duplicating model weights.
+        sampler.checkpoint_metadata = {
+            key: ckpt.get(key)
+            for key in (
+                'epoch', 'global_step', 'generator_class', 'model_config',
+                'data_metadata', 'condition_metadata', 'warmup_config',
+                'scst_config', 'parent_checkpoint', 'artifact_reportable',
+                'run_metadata', 'amp_oracle_audit', 'hemolysis_oracle_audit',
+            )
+            if key in ckpt
+        }
+        return sampler
         
     # =========================================================================
     # SAMPLING METHODS
@@ -169,7 +189,7 @@ class PeptideSampler:
                 
             # Generate
             batch_seqs = self._generate_batch(
-                curr_batch, conds, temperature, top_k, top_p, max_length
+                curr_batch, conds, temperature, top_k, top_p, min_length, max_length
             )
             total_generated += curr_batch
             
@@ -190,9 +210,17 @@ class PeptideSampler:
         temperature: float,
         top_k: int,
         top_p: float,
+        min_length: int,
         max_length: int,
     ) -> List[str]:
-        """Generate a batch of sequences."""
+        """Generate a batch autoregressively with the requested sampling policy.
+
+        Re-sampling a completed tensor of per-position logits is invalid for an
+        autoregressive model: later logits were conditioned on the model's first
+        sampled prefix, not on the replacement tokens.  Delegate sampling to the
+        generator so top-k/top-p/temperature are applied before each next-token
+        decision.
+        """
         z = torch.randn(batch_size, self.G.latent_dim, device=self.device)
 
         # If the model was trained with conditions but none are provided,
@@ -202,34 +230,23 @@ class PeptideSampler:
                 batch_size, self.G.condition_dim, device=self.device
             )
 
-        # Autoregressive generation — call forward with no target so the model
-        # runs its own _generate_autoregressive path.
-        # NOTE: GRUGenerator.forward signature is (z, target=None, condition=None),
-        # so conditions MUST be passed as a keyword arg, not positional.
-        result = self.G(z, condition=conditions)
+        tokens = self.G.generate(
+            batch_size=batch_size,
+            z=z,
+            condition=conditions,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            min_length=min_length,
+            max_length=max_length,
+            device=self.device,
+        )
 
-        # GRUGenerator returns a dict; older generators may return a tensor directly.
-        if isinstance(result, dict):
-            # Prefer logits path — allows temperature / top-k / top-p to take effect.
-            # Only use pre-computed 'sequences' when logits are unavailable.
-            if 'logits' in result:
-                logits = result['logits']
-            elif 'sequences' in result:
-                tokens = result['sequences']
-                # Strip the leading SOS token if present
-                if tokens.size(1) > 0 and (tokens[:, 0] == getattr(self.G, 'sos_idx', 1)).all():
-                    tokens = tokens[:, 1:]
-                return self._tokens_to_sequences(tokens)
-            else:
-                raise ValueError("Generator result dict has neither 'logits' nor 'sequences' key")
-        else:
-            logits = result
-
-        # Apply sampling strategy to logits
-        if temperature == 0 or (top_k == 0 and top_p >= 1.0):
-            tokens = logits.argmax(dim=-1)
-        else:
-            tokens = self._sample_from_logits(logits, temperature, top_k, top_p)
+        # Both production generators include the leading SOS token.
+        if tokens.size(1) > 0 and (
+            tokens[:, 0] == getattr(self.G, 'sos_idx', self.vocab.sos_idx)
+        ).all():
+            tokens = tokens[:, 1:]
 
         return self._tokens_to_sequences(tokens)
 
@@ -298,10 +315,10 @@ class PeptideSampler:
         return sequences
         
     @torch.no_grad()
-    def sample_stable(
+    def sample_ii_screen(
         self,
         n: int = 100,
-        stability_threshold: float = 40.0,
+        ii_threshold: float = 40.0,
         oversample: int = 3,
         max_attempts: int = 10,
         conditions: Optional[torch.Tensor] = None,
@@ -313,30 +330,33 @@ class PeptideSampler:
         batch_size: int = 64,
     ) -> List[str]:
         """
-        Generate sequences, keeping only those with Instability Index < stability_threshold.
+        Generate sequences passing an empirical Instability Index screen.
 
         Uses rejection sampling: generates oversample*n sequences per attempt
-        and filters by II. Stops when n stable sequences are collected or
+        and filters by II. Stops when n passing sequences are collected or
         max_attempts is exhausted.
 
         Args:
-            n: Target number of stable sequences
-            stability_threshold: Max instability index (default: 40.0 = stable)
+            n: Target number of II-screen-passing sequences
+            ii_threshold: Maximum Instability Index (default: 40.0)
             oversample: Multiplier — generate this many × n per attempt
             max_attempts: Max generation rounds before giving up
             conditions, temperature, top_k, top_p, min_length, max_length, batch_size:
                 Passed through to sample()
 
         Returns:
-            List of stable sequences (may be fewer than n if max_attempts exceeded)
+            Passing sequences (may be fewer than n if max_attempts is exceeded).
+
+        This is a post-generation empirical screen, not evidence of physical
+        stability. Reportable benchmark generation forbids this filter.
         """
         from ..evaluation.stability import calculate_instability_index
 
-        stable_seqs: List[str] = []
+        passing_seqs: List[str] = []
         attempts = 0
 
-        while len(stable_seqs) < n and attempts < max_attempts:
-            need = n - len(stable_seqs)
+        while len(passing_seqs) < n and attempts < max_attempts:
+            need = n - len(passing_seqs)
             to_generate = need * oversample
 
             batch_seqs = self.sample(
@@ -351,31 +371,38 @@ class PeptideSampler:
             )
 
             for seq in batch_seqs:
-                if len(stable_seqs) >= n:
+                if len(passing_seqs) >= n:
                     break
                 try:
                     ii = calculate_instability_index(seq)
-                    if ii < stability_threshold:
-                        stable_seqs.append(seq)
+                    if ii < ii_threshold:
+                        passing_seqs.append(seq)
                 except Exception:
                     continue
 
             attempts += 1
             logger.info(
-                f"sample_stable attempt {attempts}: "
-                f"{len(stable_seqs)}/{n} stable sequences collected "
+                f"sample_ii_screen attempt {attempts}: "
+                f"{len(passing_seqs)}/{n} passing sequences collected "
                 f"({len(batch_seqs)} generated, "
-                f"rate={len(stable_seqs)/max(1, len(stable_seqs) + (to_generate - len(batch_seqs)))*100:.0f}%)"
+                f"rate={len(passing_seqs)/max(1, len(passing_seqs) + (to_generate - len(batch_seqs)))*100:.0f}%)"
             )
 
-        if len(stable_seqs) < n:
+        if len(passing_seqs) < n:
             logger.warning(
-                f"sample_stable: only {len(stable_seqs)}/{n} stable sequences found "
+                f"sample_ii_screen: only {len(passing_seqs)}/{n} passing sequences found "
                 f"after {attempts} attempts. "
-                f"Try increasing oversample or relaxing stability_threshold."
+                f"Try increasing oversample or relaxing ii_threshold."
             )
 
-        return stable_seqs
+        return passing_seqs
+
+    @torch.no_grad()
+    def sample_stable(self, *args, stability_threshold: float = 40.0, **kwargs) -> List[str]:
+        """Deprecated compatibility alias for sample_ii_screen."""
+        return self.sample_ii_screen(
+            *args, ii_threshold=stability_threshold, **kwargs
+        )
 
     # =========================================================================
     # CONDITIONAL GENERATION
@@ -474,7 +501,7 @@ class PeptideSampler:
             
             if include_features:
                 try:
-                    features = extractor.extract(seq)
+                    features = extractor.extract_dict(seq)
                     row.update(features)
                 except:
                     pass

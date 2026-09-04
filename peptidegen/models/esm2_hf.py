@@ -56,6 +56,7 @@ class ESM2HF(nn.Module):
     def __init__(
         self,
         model_name: str = "esm2_t12_35M_UR50D",
+        model_revision: Optional[str] = None,
         device: Optional[torch.device] = None,
         freeze: bool = True,
         dtype: Optional[torch.dtype] = None,
@@ -64,6 +65,7 @@ class ESM2HF(nn.Module):
         from transformers import AutoTokenizer, EsmModel
 
         self.model_name = model_name
+        self.model_revision = model_revision
         self.hf_id = _to_hf_id(model_name)
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -71,11 +73,14 @@ class ESM2HF(nn.Module):
         # fp16 on GPU keeps the 650M model inside 8 GB; fp32 on CPU.
         self.dtype = dtype or (torch.float16 if self.device.type == "cuda" else torch.float32)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(self.hf_id)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.hf_id, revision=self.model_revision
+        )
         # eager attention so output_attentions / predict_contacts work (peptides
         # are short, so the speed cost is negligible).
         self.model = EsmModel.from_pretrained(
-            self.hf_id, add_pooling_layer=False, attn_implementation="eager"
+            self.hf_id, revision=self.model_revision, add_pooling_layer=False,
+            attn_implementation="eager"
         )
         self.model = self.model.to(self.device, dtype=self.dtype)
         self.embed_dim = self.model.config.hidden_size
@@ -86,7 +91,10 @@ class ESM2HF(nn.Module):
                 p.requires_grad = False
             self.model.eval()
 
-        logger.info(f"Loaded ESM-2 (HF) {self.hf_id} embed_dim={self.embed_dim} dtype={self.dtype}")
+        logger.info(
+            "Loaded ESM-2 (HF) %s revision=%s embed_dim=%s dtype=%s",
+            self.hf_id, self.model_revision or "UNPINNED", self.embed_dim, self.dtype,
+        )
 
     # ------------------------------------------------------------------ #
     # Core forward
@@ -167,11 +175,11 @@ class ESM2HF(nn.Module):
         local_window: int = 2,
         max_length: int = 64,
     ) -> Dict[str, torch.Tensor]:
-        """Build a residue KNN/contact adjacency from ESM-2 attention contacts.
+        """Build an adjacency from ESM-2 attention-derived contact probabilities.
 
-        This is the local (8 GB) surrogate for the paper's "KNN interaction
-        graph with a contact radius < 8 Å": ESM-2 predicted contact
-        probabilities stand in for spatial proximity (no MD, no folding).
+        This graph contains no coordinates or distances and must not be
+        described as a C-alpha ``<8 Angstrom`` contact graph. The optional
+        local window adds peptide-bond-neighbour connectivity.
 
         Args:
             thresh: connect (i,j) if contact prob >= thresh.
@@ -190,13 +198,25 @@ class ESM2HF(nn.Module):
         device = tokens.device
 
         if "contacts" in out:
-            cmap = out["contacts"]
-            # align contact map to token length L if needed
-            if cmap.size(-1) != L:
-                c = torch.zeros(B, L, L, device=device)
-                m = min(L, cmap.size(-1))
-                c[:, :m, :m] = cmap[:, :m, :m]
-                cmap = c
+            raw_contacts = out["contacts"]
+            # Hugging Face returns residue-only contact matrices, whereas the
+            # token tensor includes CLS/EOS/padding. Map each matrix onto the
+            # exact residue-token positions; copying into the leading square
+            # shifts every edge by one token and is incorrect.
+            if raw_contacts.size(-1) != L:
+                cmap = torch.zeros(B, L, L, device=device)
+                for batch_index in range(B):
+                    residue_positions = torch.nonzero(
+                        mask[batch_index].bool(), as_tuple=False
+                    ).squeeze(-1)
+                    count = min(int(residue_positions.numel()), raw_contacts.size(-1))
+                    if count:
+                        positions = residue_positions[:count]
+                        cmap[batch_index][positions[:, None], positions[None, :]] = (
+                            raw_contacts[batch_index, :count, :count]
+                        )
+            else:
+                cmap = raw_contacts
         else:
             cmap = torch.zeros(B, L, L, device=device)
 
@@ -224,7 +244,9 @@ class ESM2HF(nn.Module):
         if not hasattr(self, "_lm"):
             from transformers import EsmForMaskedLM
 
-            self._lm = EsmForMaskedLM.from_pretrained(self.hf_id).to(
+            self._lm = EsmForMaskedLM.from_pretrained(
+                self.hf_id, revision=self.model_revision
+            ).to(
                 self.device, dtype=self.dtype
             )
             self._lm.eval()
@@ -291,7 +313,8 @@ class ESM2EmbeddingCache:
         self.embedder = embedder
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.cache_file = self.cache_dir / f"emb_{embedder.model_name}.pkl"
+        revision = (embedder.model_revision or "unpinned").replace("/", "_")[:16]
+        self.cache_file = self.cache_dir / f"emb_{embedder.model_name}_{revision}.pkl"
         self._mem = {}
         if self.cache_file.exists():
             try:
@@ -304,7 +327,8 @@ class ESM2EmbeddingCache:
                 self._mem = {}
 
     def _key(self, seq: str) -> str:
-        return hashlib.md5(f"{self.embedder.model_name}:{seq}".encode()).hexdigest()
+        identity = f"{self.embedder.model_name}@{self.embedder.model_revision}:{seq}"
+        return hashlib.md5(identity.encode()).hexdigest()
 
     def _save(self):
         import pickle, os

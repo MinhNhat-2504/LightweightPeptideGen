@@ -1,23 +1,23 @@
 """
 LightweightPeptideGen - Antimicrobial Peptide Generation with GANs
 
-A lightweight GAN framework for generating stable antimicrobial peptides.
+A lightweight GAN framework for conditional antimicrobial-peptide generation.
 
 Modules:
     - data: Dataset, DataLoader, Vocabulary, Features
     - models: Generator, Discriminator, ESM2 embedder
     - training: GANTrainer, Loss functions
     - inference: PeptideSampler
-    - evaluation: Metrics, Stability analysis
+    - evaluation: Sequence-derived metrics and independent validation
 
 Example:
     >>> from peptidegen import GANTrainer, GRUGenerator, CNNDiscriminator
     >>> from peptidegen import PeptideSampler, load_config
-    >>> 
+    >>>
     >>> # Training
     >>> trainer = GANTrainer(generator, discriminator, config)
     >>> trainer.fit(train_loader, epochs=100)
-    >>> 
+    >>>
     >>> # Generation
     >>> sampler = PeptideSampler.from_checkpoint('checkpoints/best_model.pt')
     >>> sequences = sampler.sample(n=100, temperature=0.8)
@@ -44,11 +44,9 @@ from .data import (
     PeptideFeatureExtractor,
 )
 
-# Models
+# Models (LSTMGenerator and TransformerGenerator removed — dead code)
 from .models import (
     GRUGenerator,
-    LSTMGenerator,
-    TransformerGenerator,
     CNNDiscriminator,
     RNNDiscriminator,
     StructureEvaluator,
@@ -74,13 +72,11 @@ __all__ = [
     # Data
     'VOCAB',
     'PeptideDataset',
-    'ConditionalPeptideDataset', 
+    'ConditionalPeptideDataset',
     'get_dataloader',
     'PeptideFeatureExtractor',
     # Models
     'GRUGenerator',
-    'LSTMGenerator',
-    'TransformerGenerator',
     'CNNDiscriminator',
     'RNNDiscriminator',
     'StructureEvaluator',

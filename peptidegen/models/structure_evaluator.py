@@ -1,6 +1,8 @@
 """
-Structure Evaluator for assessing peptide structural stability
-Uses lightweight Graph Attention Network (GAT) for structure prediction
+Legacy graph-score model retained for backward compatibility.
+
+The uncalibrated learned score is not evidence of peptide structure or physical
+stability and is excluded from the reportable major-revision pipeline.
 """
 
 import torch
@@ -171,8 +173,7 @@ class LightweightGAT(nn.Module):
 
 class StructureEvaluator(nn.Module):
     """
-    Evaluates structural stability of peptide sequences.
-    Combines sequence features with graph-based structural analysis.
+    Produces an uncalibrated legacy graph score from token sequences.
     """
     
     def __init__(
@@ -372,7 +373,7 @@ class StructureEvaluator(nn.Module):
 
 class StabilityLoss(nn.Module):
     """
-    Combined loss function that includes structural stability penalties.
+    Legacy loss over the uncalibrated graph score.
     """
     
     def __init__(

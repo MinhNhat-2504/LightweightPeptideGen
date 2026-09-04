@@ -10,7 +10,7 @@ Provides functions to calculate:
 
 import math
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from collections import Counter
 
 
@@ -67,19 +67,26 @@ def calculate_diversity_metrics(sequences: List[str]) -> Dict[str, float]:
     unique_seqs = set(sequences)
     uniqueness = len(unique_seqs) / len(sequences)
     
-    # Average pairwise similarity (Jaccard)
+    # Average pairwise similarity (Jaccard over bigrams)
     if len(sequences) > 1:
         similarities = []
         sample_size = min(100, len(sequences))
-        sampled = list(np.random.choice(sequences, sample_size, replace=False))
-        
+        rng = np.random.default_rng(42)
+        sampled = list(rng.choice(sequences, sample_size, replace=False))
+
         for i in range(len(sampled)):
             for j in range(i + 1, len(sampled)):
-                set1, set2 = set(sampled[i]), set(sampled[j])
-                if set1 or set2:
+                # FIX: use bigrams (2-char substrings) instead of character set.
+                # The old set(seq) gave Jaccard=1.0 for any two sequences that
+                # share the same amino acid *types*, regardless of their order.
+                def _bigrams(s):
+                    return set(s[k:k+2] for k in range(len(s) - 1)) or {''}  # non-empty
+                set1 = _bigrams(sampled[i])
+                set2 = _bigrams(sampled[j])
+                if set1 | set2:
                     jaccard = len(set1 & set2) / len(set1 | set2)
                     similarities.append(jaccard)
-        
+
         avg_similarity = float(np.mean(similarities)) if similarities else 0.0
     else:
         avg_similarity = 1.0
@@ -133,10 +140,10 @@ def calculate_length_statistics(sequences: List[str]) -> Dict[str, float]:
 
 
 def detect_mode_collapse(
-    sequences: List[str], 
+    sequences: List[str],
     entropy_threshold: float = 0.3,
     aa_usage_threshold: float = 0.5
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Detect potential mode collapse in generated sequences.
     

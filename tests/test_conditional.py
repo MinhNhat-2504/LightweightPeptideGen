@@ -26,12 +26,15 @@ def test_conditional_dataset():
         max_length=50,
         min_length=5,
     )
+    assert len(dataset) > 0
+    assert dataset.get_condition_dim() == len(dataset.feature_names)
 
     print(f"   Dataset size: {len(dataset)}")
     print(f"   Condition dim: {dataset.get_condition_dim()}")
 
     # Test a sample
     sample = dataset[0]
+    assert sample['condition'].shape[0] == dataset.get_condition_dim()
     print(f"\n2. Sample data:")
     print(f"   Keys: {list(sample.keys())}")
     print(f"   Sequence: {sample['sequence'][:30]}...")
@@ -52,7 +55,6 @@ def test_conditional_dataset():
             print(f"   {name}: mean={stat['mean']:.2f}, std={stat['std']:.2f}")
 
     print("\n✅ ConditionalPeptideDataset test PASSED")
-    return True
 
 
 def test_quality_filter():
@@ -84,6 +86,9 @@ def test_quality_filter():
     print(f"   Testing {len(test_seqs)} sequences...")
 
     all_scores, stats = quality_filter.filter_peptides(test_seqs, return_all=True)
+    assert len(all_scores) == len(test_seqs)
+    assert stats['total'] == len(test_seqs)
+    assert stats['passing'] + stats['failing'] == stats['total']
 
     print(f"\n6. Filter results:")
     print(f"   Total: {stats['total']}")
@@ -109,7 +114,6 @@ def test_quality_filter():
         print(f"   Failure reasons: {score.failure_reasons}")
 
     print("\n✅ Quality Filter test PASSED")
-    return True
 
 
 if __name__ == '__main__':

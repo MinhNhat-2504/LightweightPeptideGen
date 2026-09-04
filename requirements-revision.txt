@@ -1,0 +1,17 @@
+# Frozen core environment used for the local major-revision audit (2026-09-04).
+# Install the CUDA build of torch appropriate for the server before this file
+# if PyPI's default wheel is not suitable.
+torch==2.7.1
+transformers==5.16.1
+accelerate==1.14.0
+fair-esm==2.0.0
+numpy==2.2.2
+scipy==1.15.1
+pandas==2.2.3
+scikit-learn==1.6.1
+PyYAML==6.0.2
+tqdm==4.67.1
+pytest==9.1.1
+
+# Optional for ESMFold secondary-structure annotation only:
+# biotite==1.6.0

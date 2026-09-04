@@ -1,0 +1,111 @@
+# Frozen configuration for the major-revision experiments.
+# Dataset paths intentionally point to the provenance-audited rebuild.
+model:
+  name: LightweightPeptideGen
+  architecture: fusion
+  latent_dim: 128
+  embedding_dim: 128
+  hidden_dim: 512
+  num_layers: 3
+  mem_tokens: 16
+  dropout: 0.2
+  bidirectional: false
+  use_attention: true
+  gat_window: 3
+  use_gat: true
+  fusion_type: cross_attention
+
+generator:
+  type: Transformer
+  num_heads: 4
+  condition_dim: 6
+
+discriminator:
+  type: CNN
+  num_filters: [64, 128, 256]
+  kernel_sizes: [3, 5, 7]
+
+esm2:
+  use_esm: true
+  esm_model: esm2_t12_35M_UR50D
+  # Hugging Face repository commit resolved and frozen for the revision run.
+  model_revision: 6fbf070e65b0b7291e7bbcd451118c216cff79d8
+  freeze_esm: true
+
+structure_evaluator:
+  use_gat: true
+  gat_heads: 4
+
+data:
+  train_path: dataset/rebuilt/train.fasta
+  train_csv: dataset/rebuilt/train.csv
+  val_path: dataset/rebuilt/validation.fasta
+  val_csv: dataset/rebuilt/validation.csv
+  test_path: dataset/rebuilt/test.fasta
+  test_csv: dataset/rebuilt/test.csv
+  dataset_report: dataset/rebuilt/dataset_build_report.json
+  # Recomputed from sequence by peptidegen.data.features. Legacy activity and
+  # toxicity proxy columns are intentionally excluded because their provenance
+  # and definitions cannot be verified from the available source files.
+  condition_features:
+    - instability_index
+    - aliphatic_index
+    - hydrophobic_moment
+    - gravy
+    - charge_at_pH7
+    - aromaticity
+  max_seq_length: 50
+  min_seq_length: 5
+  vocab_size: 24
+
+training:
+  batch_size: 64
+  gradient_accumulation_steps: 1
+  num_epochs: 50
+  learning_rate: 0.00003
+  lr_discriminator: 0.00001
+  beta1: 0.5
+  beta2: 0.999
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  label_smoothing: 0.15
+  noise_std: 0.08
+  use_amp: true
+  use_scheduler: true
+  adaptive_d: true
+  d_threshold: 2.0
+  g_steps_boost: 3.0
+  d_steps: 1
+  g_steps: 1
+  discrete_relaxation: gumbel
+  gumbel_tau_start: 1.0
+  gumbel_tau_end: 0.2
+  gumbel_anneal_epochs: 40
+  gan_loss: bce
+  lambda_gp: 10.0
+  adversarial_weight: 0.7
+  reconstruction_weight: 0.3
+  diversity_weight: 0.2
+  ngram_weight: 0.1
+  length_penalty_weight: 0.1
+  stability_weight: 0.1
+  target_stability_ii: 30.0
+  target_length_min: 10
+  target_length_max: 30
+  patience: 10
+  min_delta: 0.0005
+
+generation:
+  num_samples: 1000
+  temperature: 1.0
+  top_k: 0
+  top_p: 0.9
+  min_length: 5
+  max_length: 50
+
+device:
+  cuda: true
+  gpu_id: 0
+  num_workers: 4
+  pin_memory: true
+  mixed_precision: true

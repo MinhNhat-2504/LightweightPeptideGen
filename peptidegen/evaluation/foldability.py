@@ -1,10 +1,10 @@
 """
-B5 — Independent structural / foldability metrics.
+B5 — Sequence-plausibility and descriptive structure-proxy metrics.
 
 The generator is trained to minimise the dipeptide-based Instability Index
 (II), so reporting "II < 40 stability rate" as the headline evidence of
-structure is *circular*. This module provides metrics that are **independent
-of II** and run on commodity hardware (RTX 4060, 8 GB):
+structure is circular. This module provides metrics that are separate from II
+and run on commodity hardware; they are not independent biological validation:
 
     * ``esm_pseudo_perplexity`` — ESM-2 pseudo-perplexity. Lower = more
       evolutionarily plausible. Independent of II.
@@ -40,17 +40,21 @@ def _chou_fasman_helix_fraction(seq: str) -> float:
 
 
 class FoldabilityEvaluator:
-    """Independent structural metrics backed by a frozen ESM-2 (HF)."""
+    """Descriptive sequence metrics backed by a frozen ESM-2 (HF)."""
 
     def __init__(
         self,
         model_name: str = "esm2_t12_35M_UR50D",
+        model_revision: Optional[str] = None,
         device=None,
         max_length: int = 64,
     ):
         from ..models.esm2_hf import ESM2HF
 
-        self.embedder = ESM2HF(model_name=model_name, device=device, freeze=True)
+        self.embedder = ESM2HF(
+            model_name=model_name, model_revision=model_revision,
+            device=device, freeze=True,
+        )
         self.max_length = max_length
 
     # ------------------------------------------------------------------ #
@@ -104,6 +108,7 @@ class FoldabilityEvaluator:
         return {
             "n_sequences": len(seqs),
             "esm_model": self.embedder.model_name,
+            "esm_model_revision": self.embedder.model_revision,
             "esm_pseudo_perplexity": summ(ppl),
             "esm_contact_order": summ(contact) if compute_contacts else None,
             "helix_fraction": summ(helix),

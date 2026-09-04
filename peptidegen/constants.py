@@ -158,14 +158,16 @@ INSTABILITY_WEIGHTS: Dict[str, float] = {
     'LV': 1.0, 'LS': 1.0, 'LG': 1.0, 'LA': 1.0, 'LL': 1.0
 }
 
-# Quality thresholds for peptide evaluation
+# Legacy heuristic thresholds retained for backward compatibility. They are not
+# accepted as evidence of activity, toxicity, hemolysis, or physical stability
+# by the reportable major-revision pipeline.
 QUALITY_THRESHOLDS = {
     'instability_index': {
-        'stable': 40.0,      # Below this = stable
+        'stable': 40.0,      # Legacy key: II empirical-screen threshold
         'moderately_stable': 50.0,
     },
     'aliphatic_index': {
-        'good': 60.0,        # Above this = good thermostability
+        'good': 60.0,        # Legacy heuristic only
     },
     'therapeutic_score': {
         'promising': 0.5,    # Above this = promising
@@ -180,11 +182,11 @@ QUALITY_THRESHOLDS = {
     },
 }
 
-# Feature names used for conditional generation
+# Audited condition schema used by the major-revision configuration. The two
+# unverifiable legacy proxy columns (therapeutic_score and hemolytic_score) are
+# deliberately excluded.
 CONDITION_FEATURE_NAMES: List[str] = [
     'instability_index',
-    'therapeutic_score',
-    'hemolytic_score',
     'aliphatic_index',
     'hydrophobic_moment',
     'gravy',
@@ -226,7 +228,7 @@ def calculate_instability_index(sequence: str) -> float:
 
 
 def calculate_aliphatic_index(sequence: str) -> float:
-    """Calculate aliphatic index for thermostability."""
+    """Calculate the Ikai aliphatic index; do not treat it as stability proof."""
     if len(sequence) == 0:
         return 0.0
     

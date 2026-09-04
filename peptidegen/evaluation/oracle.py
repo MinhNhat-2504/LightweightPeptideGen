@@ -64,14 +64,18 @@ class ESM2Oracle:
     def __init__(
         self,
         model_name: str = "esm2_t12_35M_UR50D",
+        model_revision: Optional[str] = None,
         cache_dir: str = "results/esm_cache",
         device=None,
         C: float = 1.0,
+        random_state: int = 42,
     ):
         self.model_name = model_name
+        self.model_revision = model_revision
         self.cache_dir = cache_dir
         self.device = device
         self.C = C
+        self.random_state = random_state
         self._embedder = None
         self._cache = None
         self.clf = None
@@ -82,7 +86,10 @@ class ESM2Oracle:
         if self._embedder is None:
             from ..models.esm2_hf import ESM2HF, ESM2EmbeddingCache
 
-            self._embedder = ESM2HF(model_name=self.model_name, device=self.device, freeze=True)
+            self._embedder = ESM2HF(
+                model_name=self.model_name, model_revision=self.model_revision,
+                device=self.device, freeze=True,
+            )
             self._cache = ESM2EmbeddingCache(self._embedder, self.cache_dir)
 
     def embed(self, sequences: Sequence[str], batch_size: int = 32) -> np.ndarray:
@@ -108,11 +115,28 @@ class ESM2Oracle:
 
         self.clf = make_pipeline(
             StandardScaler(),
-            LogisticRegression(C=self.C, max_iter=2000, class_weight="balanced"),
+            LogisticRegression(
+                C=self.C,
+                max_iter=2000,
+                class_weight="balanced",
+                random_state=self.random_state,
+            ),
         )
         self.clf.fit(Xtr, ytr)
 
-        report = {"model_name": self.model_name, "n_train": len(train_seqs)}
+        report = {
+            "model_name": self.model_name,
+            "model_revision": self.model_revision,
+            "classifier": {
+                "type": "LogisticRegression",
+                "C": self.C,
+                "max_iter": 2000,
+                "class_weight": "balanced",
+                "random_state": self.random_state,
+                "decision_threshold": self.threshold,
+            },
+            "n_train": len(train_seqs),
+        }
         report["train"] = classification_metrics(ytr, self.clf.predict_proba(Xtr)[:, 1])
 
         if val_seqs is not None and val_labels is not None:
@@ -151,14 +175,20 @@ class ESM2Oracle:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:
             pickle.dump({"clf": self.clf, "model_name": self.model_name,
-                         "threshold": self.threshold}, f)
+                         "model_revision": self.model_revision,
+                         "threshold": self.threshold, "C": self.C,
+                         "random_state": self.random_state}, f)
         logger.info(f"Saved oracle -> {path}")
 
     @classmethod
     def load(cls, path: str, cache_dir: str = "results/esm_cache", device=None) -> "ESM2Oracle":
         with open(path, "rb") as f:
             blob = pickle.load(f)
-        o = cls(model_name=blob["model_name"], cache_dir=cache_dir, device=device)
+        o = cls(
+            model_name=blob["model_name"], model_revision=blob.get("model_revision"),
+            cache_dir=cache_dir, device=device, C=blob.get("C", 1.0),
+            random_state=blob.get("random_state", 42),
+        )
         o.clf = blob["clf"]
         o.threshold = blob.get("threshold", 0.5)
         return o

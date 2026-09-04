@@ -2,7 +2,7 @@
 Feature-based Loss Functions for Controlled Peptide Generation.
 
 These losses guide the generator to produce peptides with desired properties:
-- Stability Loss: Penalize high instability_index (want < 40)
+- II-screen loss: Penalize high Instability Index (empirical target < 40)
 - Therapeutic Loss: Reward high therapeutic_score
 - Toxicity Loss: Penalize high hemolytic_score
 - Quality Loss: Combined multi-objective loss
@@ -83,13 +83,15 @@ class PeptideFeaturePredictor(nn.Module):
 
 class StabilityLoss(nn.Module):
     """
-    Loss to encourage stable peptides (instability_index < 40).
+    Legacy-named loss encouraging the empirical II < 40 screen.
+
+    It does not optimize or measure physical peptide stability.
     """
     
     def __init__(self, threshold: float = 40.0, margin: float = 10.0):
         """
         Args:
-            threshold: Instability index threshold for stable peptides
+            threshold: Empirical Instability Index threshold
             margin: Soft margin for the loss
         """
         super().__init__()
@@ -285,13 +287,16 @@ class FeatureConditioningLoss(nn.Module):
 
 class MultiObjectiveFeatureLoss(nn.Module):
     """
-    Combined multi-objective loss for peptide quality.
+    Legacy multi-objective heuristic retained for compatibility.
+
+    These proxy objectives are not used as independent biological evidence by
+    the reportable major-revision workflow.
     
     Objectives:
-        1. Stability: Low instability_index (< 40)
+        1. II screen: Low instability_index (< 40)
         2. Therapeutic: High therapeutic_score
         3. Safety: Low hemolytic_score
-        4. Thermostability: High aliphatic_index
+        4. Aliphatic-index heuristic
     """
     
     def __init__(

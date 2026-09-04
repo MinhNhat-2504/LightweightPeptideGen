@@ -8,7 +8,7 @@ stream (GATv2, H_graph), combined by a Multi-Head Cross-Attention layer
 
         H_fusion = softmax( (H_seq W_Q)(H_graph W_K)^T / sqrt(d) )(H_graph W_V)
 
-exactly as in Eq. (3). The 8-dim physicochemical condition C and the noise
+exactly as in Eq. (3). The configured physicochemical condition C and the noise
 latent z are injected through the same memory builder so that de-novo
 generation (no input sequence) and teacher-forced MLE share one backbone.
 
@@ -20,9 +20,10 @@ Design notes
   token embeddings of the real sequence). They additively refine H_seq via a
   Perceiver-style resampler, so the fusion genuinely consumes ESM-2 features
   during teacher forcing without coupling the heavy backbone into autograd.
-* **Structural stream:** a dense GATv2 layer over a windowed adjacency for
-  Phase 1. The graph builder is isolated in ``_build_adjacency`` so Phase 2
-  (A2) can drop in the KNN <8 Å contact graph without touching anything else.
+* **Graph stream:** a dense GATv2 layer over a windowed adjacency at de novo
+  inference. During warm-up, callers may provide a residue adjacency (the
+  current local pipeline uses thresholded ESM-2 attention contacts). The model
+  itself makes no claim about coordinate-derived distances.
 
 Interface is drop-in compatible with ``GANTrainer`` / ``PeptideSampler``:
 ``forward(z, target=None, condition=None, temperature=1.0, esm_tokens=None)``
@@ -84,6 +85,26 @@ class DenseGATv2Layer(nn.Module):
         return F.elu(out)
 
 
+class ConcatFusion(nn.Module):
+    """Ablation baseline: simple concatenation [H_seq || H_graph] projected to d_model."""
+
+    def __init__(self, d_model: int, dropout: float = 0.1):
+        super().__init__()
+        self.proj = nn.Linear(2 * d_model, d_model)
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, h_seq, h_graph, key_padding_mask=None):
+        # h_seq: (B, M, d), h_graph: (B, M, d) or (B, L, d)
+        if h_graph.size(1) != h_seq.size(1):
+            h_graph = h_graph[:, :h_seq.size(1), :]
+            if h_graph.size(1) < h_seq.size(1):
+                pad = torch.zeros(h_seq.size(0), h_seq.size(1) - h_graph.size(1), h_seq.size(2), device=h_seq.device)
+                h_graph = torch.cat([h_graph, pad], dim=1)
+        cat = torch.cat([h_seq, h_graph], dim=-1)
+        return self.norm(h_seq + self.dropout(self.proj(cat)))
+
+
 class CrossAttentionFusion(nn.Module):
     """Eq. (3): H_seq is Query, H_graph is Key/Value."""
 
@@ -112,10 +133,12 @@ class MultimodalFusionGenerator(nn.Module):
         num_layers: int = 3,           # paper: 3 decoder layers
         num_heads: int = 4,            # paper: 4 heads
         dropout: float = 0.2,
-        condition_dim: Optional[int] = 8,
+        condition_dim: Optional[int] = 6,
         mem_tokens: int = 16,          # number of fused memory tokens
         gat_heads: int = 4,
         gat_window: int = 3,
+        use_gat: bool = True,          # set to False for w/o GATv2 ablation
+        fusion_type: str = "cross_attention",  # 'cross_attention' | 'concat' | 'none'
         esm_dim: Optional[int] = None,  # set to enable the ESM refinement path
         pad_idx: int = 0,
         sos_idx: int = 1,
@@ -133,6 +156,10 @@ class MultimodalFusionGenerator(nn.Module):
         self.dropout = dropout
         self.condition_dim = condition_dim
         self.mem_tokens = mem_tokens
+        self.use_gat = use_gat
+        self.fusion_type = fusion_type
+        self.gat_heads = gat_heads
+        self.gat_window = gat_window
         self.esm_dim = esm_dim
         self.pad_idx = pad_idx
         self.sos_idx = sos_idx
@@ -160,11 +187,17 @@ class MultimodalFusionGenerator(nn.Module):
             self.esm_norm = nn.LayerNorm(d)
 
         # ---- structural stream (GATv2) ----
-        self.gat = DenseGATv2Layer(d, d // gat_heads, heads=gat_heads, dropout=dropout)
-        self.gat_window = gat_window
-
-        # ---- cross-attention fusion (Eq. 3) ----
-        self.fusion = CrossAttentionFusion(d, num_heads, dropout)
+        if use_gat:
+            self.gat = DenseGATv2Layer(d, d // gat_heads, heads=gat_heads, dropout=dropout)
+        else:
+            self.gat = None
+        # ---- fusion layer (Eq. 3 or Ablation) ----
+        if fusion_type == "concat":
+            self.fusion = ConcatFusion(d, dropout)
+        elif fusion_type == "none":
+            self.fusion = None
+        else:
+            self.fusion = CrossAttentionFusion(d, num_heads, dropout)
 
         # ---- compact Transformer decoder ----
         self.embedding = nn.Embedding(vocab_size, d, padding_idx=pad_idx)
@@ -178,10 +211,10 @@ class MultimodalFusionGenerator(nn.Module):
 
     # ------------------------------------------------------------------ #
     def _build_adjacency(self, n: int, device: torch.device) -> torch.Tensor:
-        """Windowed adjacency over the M memory nodes (Phase 1).
+        """Windowed adjacency over the M memory nodes (de novo phases).
 
-        Phase 2 (A2) replaces this with a KNN <8 Å contact graph derived from
-        ESM-2 / ESMFold without changing any caller.
+        Warm-up callers may replace this with an explicitly documented residue
+        adjacency without changing the generator.
         """
         idx = torch.arange(n, device=device)
         adj = (idx.unsqueeze(0) - idx.unsqueeze(1)).abs() <= self.gat_window
@@ -219,16 +252,22 @@ class MultimodalFusionGenerator(nn.Module):
             h_seq = self.esm_norm(h_seq + torch.nan_to_num(refined, nan=0.0))
 
         # structural stream H_graph
-        if res is not None and contact_adj is not None:
-            # A2: GATv2 over the residue KNN <8 Å contact graph (real topology).
+        if self.gat is None:
+            h_graph = h_seq
+        elif res is not None and contact_adj is not None:
+            # Warm-up: GATv2 over the caller-supplied residue adjacency.
             h_graph = self.gat(res, contact_adj)                     # (B, L, d) residues
-            kv_pad = ~esm_mask.bool() if esm_mask is not None else None
-            memory = self.fusion(h_seq, h_graph, key_padding_mask=kv_pad)  # Eq.(3)
         else:
             # de-novo / no-contacts fallback: GATv2 over the memory tokens.
             adj = self._build_adjacency(self.mem_tokens, device)
             h_graph = self.gat(h_seq, adj)                           # (B, M, d)
-            memory = self.fusion(h_seq, h_graph)
+
+        # multimodal fusion
+        if self.fusion is not None:
+            kv_pad = ~esm_mask.bool() if (esm_mask is not None and res is not None and contact_adj is not None) else None
+            memory = self.fusion(h_seq, h_graph, key_padding_mask=kv_pad)
+        else:
+            memory = h_seq
         return memory
 
     @staticmethod
@@ -259,19 +298,51 @@ class MultimodalFusionGenerator(nn.Module):
         tokens, logits = self._autoregressive(memory, temperature)
         return {"sequences": tokens, "logits": logits}
 
-    def _autoregressive(self, memory: torch.Tensor, temperature: float) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _mask_generation_logits(
+        self,
+        logits: torch.Tensor,
+        step: int,
+        min_length: int = 5,
+        finished: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Mask non-residue tokens and force padding after the first EOS."""
+        logits = logits.clone()
+        invalid = {self.pad_idx, self.sos_idx, 3}  # vocabulary index 3 is <UNK>
+        for idx in invalid:
+            if 0 <= idx < logits.size(-1):
+                logits[..., idx] = float("-inf")
+        if step < min_length:
+            logits[..., self.eos_idx] = float("-inf")
+        if finished is not None and finished.any():
+            logits[finished] = float("-inf")
+            logits[finished, self.pad_idx] = 0.0
+        return logits
+
+    def _autoregressive(
+        self,
+        memory: torch.Tensor,
+        temperature: float,
+        min_length: int = 5,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         B = memory.size(0)
         device = memory.device
         cur = torch.full((B, 1), self.sos_idx, dtype=torch.long, device=device)
+        finished = torch.zeros(B, dtype=torch.bool, device=device)
         all_logits = []
-        for _ in range(self.max_length):
+        for step in range(self.max_length):
             tgt = self.pos_encoding(self.embedding(cur))
             mask = self._causal_mask(cur.size(1), device)
             out = self.decoder(tgt, memory, tgt_mask=mask)
             logits = self.output_projection(out[:, -1:, :])          # (B,1,V)
+            logits = self._mask_generation_logits(
+                logits.squeeze(1), step, min_length, finished
+            ).unsqueeze(1)
             all_logits.append(logits)
             probs = F.softmax(logits.squeeze(1) / max(temperature, 1e-6), dim=-1)
             nxt = torch.multinomial(probs, 1)
+            # Avoid in-place mutation: ``finished`` was used as an indexing
+            # mask in the graph for prior steps and autograd tracks its version.
+            finished = finished | (nxt.squeeze(1) == self.eos_idx)
             cur = torch.cat([cur, nxt], dim=1)
         return cur, torch.cat(all_logits, dim=1)
 
@@ -285,7 +356,7 @@ class MultimodalFusionGenerator(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Fast path used by GANTrainer: returns (tokens, logits)."""
         memory = self._build_memory(z, condition, esm_tokens, esm_mask, contact_adj)
-        return self._autoregressive(memory, temperature=1.0)
+        return self._autoregressive(memory, temperature=1.0, min_length=5)
 
     def rl_rollout(
         self,
@@ -308,11 +379,13 @@ class MultimodalFusionGenerator(nn.Module):
         cur = torch.full((B, 1), self.sos_idx, dtype=torch.long, device=device)
         finished = torch.zeros(B, dtype=torch.bool, device=device)
         toks, logps, ents = [], [], []
-        for _ in range(ml):
+        alive_steps = []
+        for step in range(ml):
             tgt = self.pos_encoding(self.embedding(cur))
             mask = self._causal_mask(cur.size(1), device)
             out = self.decoder(tgt, memory, tgt_mask=mask)
             logits = self.output_projection(out[:, -1, :])      # (B, V)
+            logits = self._mask_generation_logits(logits, step, 5, finished)
             logp_all = F.log_softmax(logits, dim=-1)
             if greedy:
                 nxt = logits.argmax(dim=-1)
@@ -326,6 +399,7 @@ class MultimodalFusionGenerator(nn.Module):
             toks.append(nxt)
             logps.append(lp)
             ents.append(ent)
+            alive_steps.append(alive)
             finished = finished | (nxt == self.eos_idx)
             cur = torch.cat([cur, nxt.unsqueeze(1)], dim=1)
             if finished.all():
@@ -334,7 +408,7 @@ class MultimodalFusionGenerator(nn.Module):
         logp_sum = torch.stack(logps, dim=1).sum(dim=1)          # (B,)
         # mean entropy per sequence over emitted positions
         ent_stack = torch.stack(ents, dim=1)                     # (B, T)
-        lengths = (tokens != self.pad_idx).float().sum(dim=1).clamp(min=1)
+        lengths = torch.stack(alive_steps, dim=1).sum(dim=1).clamp(min=1)
         entropy = ent_stack.sum(dim=1) / lengths                 # (B,)
         return tokens, logp_sum, entropy
 
@@ -348,6 +422,7 @@ class MultimodalFusionGenerator(nn.Module):
         temperature: float = 1.0,
         top_k: int = 0,
         top_p: float = 0.9,
+        min_length: int = 5,
         device: Optional[torch.device] = None,
     ) -> torch.Tensor:
         device = device or next(self.parameters()).device
@@ -357,15 +432,26 @@ class MultimodalFusionGenerator(nn.Module):
         ml = max_length or self.max_length
         cur = torch.full((z.size(0), 1), self.sos_idx, dtype=torch.long, device=device)
         finished = torch.zeros(z.size(0), dtype=torch.bool, device=device)
-        for _ in range(ml):
+        if temperature < 0:
+            raise ValueError("temperature must be non-negative")
+        if not 0 < top_p <= 1:
+            raise ValueError("top_p must be in (0, 1]")
+        for step in range(ml):
             if finished.all():
                 break
             tgt = self.pos_encoding(self.embedding(cur))
             mask = self._causal_mask(cur.size(1), device)
             out = self.decoder(tgt, memory, tgt_mask=mask)
-            logits = self.output_projection(out[:, -1, :]) / max(temperature, 1e-6)
+            logits = self.output_projection(out[:, -1, :])
+            logits = self._mask_generation_logits(logits, step, min_length, finished)
+            if temperature == 0:
+                nxt = logits.argmax(dim=-1, keepdim=True)
+                finished = finished | (nxt.squeeze(-1) == self.eos_idx)
+                cur = torch.cat([cur, nxt], dim=1)
+                continue
+            logits = logits / temperature
             if top_k > 0:
-                kth = torch.topk(logits, top_k)[0][..., -1, None]
+                kth = torch.topk(logits, min(top_k, logits.size(-1)))[0][..., -1, None]
                 logits[logits < kth] = float("-inf")
             if top_p < 1.0:
                 sl, si = torch.sort(logits, descending=True)
@@ -375,6 +461,6 @@ class MultimodalFusionGenerator(nn.Module):
                 rm[..., 0] = 0
                 logits[rm.scatter(1, si, rm)] = float("-inf")
             nxt = torch.multinomial(F.softmax(logits, dim=-1), 1)
-            finished |= nxt.squeeze(-1) == self.eos_idx
+            finished = finished | (nxt.squeeze(-1) == self.eos_idx)
             cur = torch.cat([cur, nxt], dim=1)
         return cur

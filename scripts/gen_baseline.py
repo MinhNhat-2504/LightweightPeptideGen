@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """
-Generate sequences from a trained baseline into the SAME FASTA layout the
+Generate sequences from a trained architecture-inspired control into the same FASTA layout the
 proposed model uses (``<Name>_seed<N>.fasta``), so that scripts/evaluate_generated.py
 scores every model under one identical protocol (same oracle, same stability /
 foldability metrics) for a fair Table-5 comparison.
 
 Usage:
-    python scripts/gen_baseline.py --model hydramp --name HydrAMP \
+    python scripts/gen_baseline.py --model hydramp \
         --checkpoint baselines/checkpoints/hydramp/best.pt --num 1000 --out-dir results/gen
 """
 
@@ -41,13 +41,25 @@ def build_model(name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, choices=["hydramp", "m3cad", "esm2gen"])
-    ap.add_argument("--name", required=True, help="display name used in FASTA filenames")
+    ap.add_argument("--name", default=None, help="optional non-misleading control label")
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--num", type=int, default=1000)
     ap.add_argument("--seeds", type=int, nargs="+", default=[42, 123, 456, 789, 1337])
     ap.add_argument("--out-dir", default="results/gen")
     ap.add_argument("--batch-size", type=int, default=512)
     args = ap.parse_args()
+
+    default_names = {
+        "hydramp": "HydrAMPInspiredCVAE",
+        "m3cad": "M3CADInspiredMultimodalCVAE",
+        "esm2gen": "ESM2DecoderControl",
+    }
+    args.name = args.name or default_names[args.model]
+    if args.name.lower().replace("-", "") in {"hydramp", "m3cad"}:
+        ap.error(
+            "local baseline code is an architecture-inspired reimplementation; "
+            "use a label such as HydrAMPInspiredCVAE or M3CADInspiredMultimodalCVAE"
+        )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = build_model(args.model)

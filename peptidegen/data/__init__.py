@@ -3,6 +3,7 @@ Data utilities for peptide processing
 """
 
 from .vocabulary import PeptideVocabulary, VOCAB
+from .integrity import validate_dataset_build
 from .dataset import (
     PeptideDataset, 
     PeptideFastaDataset, 
@@ -22,4 +23,5 @@ __all__ = [
     'get_dataloader',
     'collate_peptides',
     'PeptideFeatureExtractor',
+    'validate_dataset_build',
 ]

@@ -46,7 +46,7 @@ class PeptideFeatureExtractor:
         # Aromaticity
         'aromatic': {
             'A': 0, 'C': 0, 'D': 0, 'E': 0, 'F': 1,
-            'G': 0, 'H': 1, 'I': 0, 'K': 0, 'L': 0,
+            'G': 0, 'H': 0, 'I': 0, 'K': 0, 'L': 0,
             'M': 0, 'N': 0, 'P': 0, 'Q': 0, 'R': 0,
             'S': 0, 'T': 0, 'V': 0, 'W': 1, 'Y': 1
         },
@@ -147,8 +147,10 @@ class PeptideFeatureExtractor:
     
     def _calc_instability_index(self, sequence: str) -> float:
         """
-        Calculate instability index.
-        Proteins with II < 40 are considered stable.
+        Calculate the empirical Guruprasad Instability Index.
+
+        The reportable evaluation treats II < 40 as a sequence screen, not as
+        thermodynamic, structural, proteolytic, or membrane-stability evidence.
         """
         if len(sequence) < 2:
             return 0.0
@@ -185,8 +187,27 @@ class PeptideFeatureExtractor:
         return hydro_sum / len(sequence)
     
     def _calc_charge_at_pH7(self, sequence: str) -> float:
-        """Calculate net charge at pH 7."""
-        return sum(self.AA_PROPERTIES['charge'].get(aa, 0) for aa in sequence)
+        """Estimate net charge at pH 7 with Henderson--Hasselbalch terms.
+
+        The calculation includes free N/C termini and the ionizable side
+        chains K, R, H, D, E, C, and Y.  Dataset construction and later
+        controllability evaluation call this same implementation.
+        """
+        if not sequence:
+            return 0.0
+        pH = 7.0
+        pka = {
+            'N_term': 9.69, 'C_term': 2.34,
+            'K': 10.53, 'R': 12.48, 'H': 6.00,
+            'D': 3.86, 'E': 4.25, 'C': 8.33, 'Y': 10.07,
+        }
+        charge = 1.0 / (1.0 + 10 ** (pH - pka['N_term']))
+        charge -= 1.0 / (1.0 + 10 ** (pka['C_term'] - pH))
+        for aa in ('K', 'R', 'H'):
+            charge += sequence.count(aa) / (1.0 + 10 ** (pH - pka[aa]))
+        for aa in ('D', 'E', 'C', 'Y'):
+            charge -= sequence.count(aa) / (1.0 + 10 ** (pka[aa] - pH))
+        return charge
     
     def _calc_hydrophobic_ratio(self, sequence: str) -> float:
         """Calculate ratio of hydrophobic residues."""
@@ -212,8 +233,10 @@ class PeptideFeatureExtractor:
     
     def _calc_aliphatic_index(self, sequence: str) -> float:
         """
-        Calculate aliphatic index.
-        Higher values indicate more thermostable proteins.
+        Calculate the Ikai aliphatic index.
+
+        Its historical association with globular-protein thermostability is
+        not used as evidence of peptide stability.
         """
         if not sequence:
             return 0.0
@@ -277,8 +300,10 @@ class PeptideFeatureExtractor:
 
 def compute_stability_score(sequence: str) -> float:
     """
-    Compute a stability score for a peptide sequence.
-    Higher scores indicate more stable peptides.
+    Compute the legacy heuristic quality composite.
+
+    This backward-compatible helper is not used by the reportable revision
+    pipeline and must not be interpreted as physical stability.
     
     Args:
         sequence: Amino acid sequence

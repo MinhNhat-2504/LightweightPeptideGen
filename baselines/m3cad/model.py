@@ -1,10 +1,11 @@
 """
-M3-CAD Simplified Baseline: Multimodal Conditional VAE with Regression + Multilabel Classifier.
+M3-CAD-inspired control: multimodal conditional VAE with regression and classification.
 
-Adapted from: Qian et al. 2023, "M3-CAD: Multimodal, Multitask, Multilabel,
-Conditionally-Controlled Antimicrobial Peptide Discovery."
+Inspired by Li et al. (2026), "M3-CAD: Multimodal Multi-Attribute Controlled
+Antimicrobial Peptide Design," Advanced Science, doi:10.1002/advs.202515835.
 
-Simplification: No 3D voxel branch (dataset lacks structural data).
+This is not the official M3-CAD implementation. Simplification: no 3D voxel branch
+(the local dataset lacks structural data). See ``baselines/BASELINE_AUDIT.md``.
 Instead: dual-encoder using sequence features + 8 physicochemical features.
 
 Architecture:

@@ -1,7 +1,10 @@
 """
-HydrAMP Baseline: Conditional Variational Autoencoder with AMP/MIC classifiers.
+HydrAMP-inspired control: conditional VAE with AMP/MIC classifiers.
 
-Architecture (faithful to Miszta et al. 2022):
+This is a project-local approximation, not the official HydrAMP code and not a
+faithful-reproduction claim. See ``baselines/BASELINE_AUDIT.md``.
+
+Architecture inspired by Szymczak et al. (2023):
     Encoder: Embedding → GRU → (μ, logσ²)  [latent_dim=128]
     Decoder: z + condition → GRU → logits
     Classifier 1: z → MLP → P(AMP)         [binary, BCE loss]

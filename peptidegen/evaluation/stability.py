@@ -1,5 +1,5 @@
 """
-Peptide Stability Metrics Module.
+Sequence-derived peptide descriptor module.
 
 Provides functions to calculate various stability metrics for peptides:
 - Instability Index (Guruprasad et al., 1990)
@@ -58,7 +58,8 @@ def calculate_instability_index(sequence: str) -> float:
         sequence: Amino acid sequence
         
     Returns:
-        Instability index value. < 40 indicates stable protein.
+        Instability Index value. The historical <40 threshold is reported only
+        as an empirical screen and is not a physical-stability measurement.
     """
     if len(sequence) < 2:
         return 0.0
@@ -93,7 +94,7 @@ def calculate_aliphatic_index(sequence: str) -> float:
     """
     Calculate Aliphatic Index (Ikai, 1980).
     
-    Higher values indicate better thermostability.
+    This descriptor is not treated as peptide-stability evidence.
     
     Args:
         sequence: Amino acid sequence
@@ -270,7 +271,11 @@ def calculate_amino_acid_composition(sequence: str) -> Dict[str, float]:
 
 class PeptideStabilityAnalyzer:
     """
-    Comprehensive peptide stability analyzer.
+    Backward-compatible analyzer for sequence-derived descriptors.
+
+    Legacy output keys is_stable and stability_rate mean only that the II
+    threshold passed. New reporting code relabels that endpoint as the
+    II-screen-pass rate.
     """
     
     STANDARD_AA = set('ACDEFGHIKLMNPQRSTVWY')

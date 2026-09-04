@@ -8,7 +8,8 @@ sys.path.insert(0, '.')
 def test_imports():
     """Test all imports work"""
     print("Testing imports...")
-    from peptidegen.models.generator import GRUGenerator, LSTMGenerator, TransformerGenerator
+    from peptidegen.models.generator import GRUGenerator
+    from peptidegen.models.fusion_generator import MultimodalFusionGenerator
     from peptidegen.models.discriminator import CNNDiscriminator
     from peptidegen.data.dataset import ConditionalPeptideDataset
     from peptidegen.data.vocabulary import VOCAB

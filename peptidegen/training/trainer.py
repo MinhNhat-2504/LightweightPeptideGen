@@ -15,14 +15,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
 from pathlib import Path
 from typing import Dict, Optional, Any, List
 import logging
 import time
 import json
 
-from .losses import DiversityLoss, FeatureMatchingLoss, ReconstructionLoss, NgramDiversityLoss, LengthPenaltyLoss, StabilityBiasLoss
+from .losses import (
+    DiversityLoss,
+    FeatureMatchingLoss,
+    ReconstructionLoss,
+    NgramDiversityLoss,
+    LengthPenaltyLoss,
+    StabilityBiasLoss,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +66,7 @@ class GANTrainer:
         # Models
         self.G = generator.to(self.device)
         self.D = discriminator.to(self.device)
+        self.accept_conditions = False
 
         # Training config (extract before _init_hyperparams)
         training_cfg = config.get('training', config)  # Use full config as fallback for compatibility
@@ -76,11 +83,7 @@ class GANTrainer:
             batch_sim_weight=0.3,
             pairwise_weight=0.3,
         )
-        self.feature_matching = FeatureMatchingLoss()
         self.ngram_loss = NgramDiversityLoss(bigram_weight=0.5, trigram_weight=0.5)
-        # LengthPenaltyLoss is re-instantiated in _init_hyperparams after config is read,
-        # but we define a placeholder here; actual instance created after _init_hyperparams.
-        self._length_loss_eos_idx = 2  # will be updated if needed
 
         # Scaler
         self.use_amp = training_cfg.get('use_amp', True) and torch.cuda.is_available()
@@ -88,7 +91,7 @@ class GANTrainer:
 
         # Length penalty loss (needs target_len_min/max from _init_hyperparams)
         self.length_penalty_loss = LengthPenaltyLoss(
-            eos_idx=self._length_loss_eos_idx,
+            eos_idx=2,
             target_min=self.target_len_min,
             target_max=self.target_len_max,
         )
@@ -124,6 +127,7 @@ class GANTrainer:
 
         # Loss weights
         self.w_adv = cfg.get('adversarial_weight', 0.4)
+        self.w_rec = cfg.get('reconstruction_weight', 0.0)
         self.w_div = cfg.get('diversity_weight', 0.8)
         self.w_fm = cfg.get('feature_matching_weight', 0.3)
         self.w_ngram = cfg.get('ngram_weight', 0.0)
@@ -141,7 +145,10 @@ class GANTrainer:
         # --- A3: discrete relaxation + GAN objective (config-selectable) ---
         # discrete_relaxation: 'softmax' (legacy) | 'gumbel' (straight-through)
         self.discrete_relax = cfg.get('discrete_relaxation', 'softmax')
-        self.gumbel_tau = cfg.get('gumbel_tau', 1.0)
+        self.gumbel_tau_start = cfg.get('gumbel_tau_start', cfg.get('gumbel_tau', 1.0))
+        self.gumbel_tau_end = cfg.get('gumbel_tau_end', self.gumbel_tau_start)
+        self.gumbel_anneal_epochs = max(1, int(cfg.get('gumbel_anneal_epochs', 1)))
+        self.gumbel_tau = self.gumbel_tau_start
         # gan_loss: 'bce' (non-saturating, legacy) | 'wgan_gp' (paper Eq.8-9)
         self.gan_loss = cfg.get('gan_loss', 'bce')
         self.lambda_gp = cfg.get('lambda_gp', 10.0)
@@ -179,8 +186,44 @@ class GANTrainer:
             return F.gumbel_softmax(logits, tau=self.gumbel_tau, hard=True, dim=-1)
         return F.softmax(logits, dim=-1)
 
+    def _set_gumbel_temperature(self, epoch: int) -> None:
+        """Apply a pre-specified exponential temperature schedule."""
+        if self.gumbel_anneal_epochs <= 1 or self.gumbel_tau_start == self.gumbel_tau_end:
+            self.gumbel_tau = float(self.gumbel_tau_start)
+            return
+        fraction = min(max(epoch, 0) / (self.gumbel_anneal_epochs - 1), 1.0)
+        self.gumbel_tau = float(
+            self.gumbel_tau_start
+            * (self.gumbel_tau_end / self.gumbel_tau_start) ** fraction
+        )
+
+    def _reconstruction_loss(self, real_inputs: torch.Tensor,
+                             targets: Optional[torch.Tensor],
+                             conditions: Optional[torch.Tensor],
+                             deterministic_latent: bool = False) -> torch.Tensor:
+        """Teacher-forced next-token CE used during training and selection."""
+        if targets is None:
+            targets = torch.roll(real_inputs, shifts=-1, dims=1)
+            targets[:, -1] = getattr(self.G, 'pad_idx', 0)
+        z = torch.zeros(real_inputs.size(0), self.G.latent_dim, device=self.device)
+        if not deterministic_latent:
+            z.normal_()
+        output = self.G(z, target=real_inputs, condition=conditions)
+        logits = output['logits'] if isinstance(output, dict) else output
+        length = min(logits.size(1), targets.size(1))
+        return F.cross_entropy(
+            logits[:, :length].reshape(-1, logits.size(-1)),
+            targets[:, :length].reshape(-1),
+            ignore_index=getattr(self.G, 'pad_idx', 0),
+        )
+
     def _gradient_penalty(self, real: torch.Tensor, fake: torch.Tensor) -> torch.Tensor:
         """WGAN-GP gradient penalty on real/fake (B,L,V) interpolates."""
+        if real.shape != fake.shape:
+            raise ValueError(
+                "WGAN-GP requires identically shaped real and fake tensors; "
+                f"received real={tuple(real.shape)} and fake={tuple(fake.shape)}"
+            )
         B = real.size(0)
         alpha = torch.rand(B, 1, 1, device=real.device)
         inter = (alpha * real + (1 - alpha) * fake).requires_grad_(True)
@@ -192,10 +235,35 @@ class GANTrainer:
         )[0].reshape(B, -1)
         return ((grads.norm(2, dim=1) - 1.0) ** 2).mean()
 
+    def _real_tokens_for_discriminator(
+        self,
+        real_inputs: torch.Tensor,
+        reconstruction_targets: Optional[torch.Tensor],
+        generated_length: int,
+    ) -> torch.Tensor:
+        """Return real next-token sequences with the same length as generated data.
+
+        Dataset inputs normally contain ``SOS + residues`` whereas targets contain
+        ``residues + EOS``.  The discriminator should compare generated next-token
+        sequences with the latter.  Explicit alignment is also required by the
+        interpolation used for WGAN-GP.
+        """
+        source = reconstruction_targets if reconstruction_targets is not None else real_inputs
+        if source.size(1) > generated_length:
+            return source[:, :generated_length]
+        if source.size(1) < generated_length:
+            return F.pad(
+                source,
+                (0, generated_length - source.size(1)),
+                value=getattr(self.G, 'pad_idx', 0),
+            )
+        return source
+
     def train_step(
         self,
         real_seqs: torch.Tensor,
         conditions: Optional[torch.Tensor] = None,
+        reconstruction_targets: Optional[torch.Tensor] = None,
         loss_scale: float = 1.0,
     ) -> Dict[str, float]:
         """
@@ -214,6 +282,8 @@ class GANTrainer:
         real_seqs = real_seqs.to(self.device)
         if conditions is not None:
             conditions = conditions.to(self.device)
+        if reconstruction_targets is not None:
+            reconstruction_targets = reconstruction_targets.to(self.device)
 
         metrics = {}
 
@@ -230,15 +300,20 @@ class GANTrainer:
 
         for _ in range(self.d_steps):
             with torch.amp.autocast('cuda', enabled=step_amp):
-                # Real samples - soft one-hot with optional instance noise
-                real_onehot = F.one_hot(real_seqs, num_classes=self.D.vocab_size).float()
-                if self.noise_std > 0:
-                    real_onehot = real_onehot + torch.randn_like(real_onehot) * self.noise_std
-
                 # Fake samples (no grad to G during D step)
                 with torch.no_grad():
                     _, fake_logits_d = self._generate(batch_size, conditions)
                 fake_in_d = self._relax(fake_logits_d)
+
+                # Compare like with like: generated logits represent next tokens
+                # (residues + EOS), not decoder inputs (SOS + residues).  Aligning
+                # lengths here also prevents invalid WGAN-GP interpolation.
+                real_tokens_d = self._real_tokens_for_discriminator(
+                    real_seqs, reconstruction_targets, fake_in_d.size(1)
+                )
+                real_onehot = F.one_hot(real_tokens_d, num_classes=self.D.vocab_size).float()
+                if self.noise_std > 0:
+                    real_onehot = real_onehot + torch.randn_like(real_onehot) * self.noise_std
 
                 d_real = self.D(real_onehot)
                 d_fake = self.D(fake_in_d)
@@ -319,9 +394,15 @@ class GANTrainer:
                 else:
                     loss_stability = fake_logits.new_tensor(0.0)
 
+                loss_reconstruction = (
+                    self._reconstruction_loss(real_seqs, reconstruction_targets, conditions)
+                    if self.w_rec > 0 else fake_logits.new_tensor(0.0)
+                )
+
                 # Total G loss (scaled for accumulation)
                 g_loss = (
                     self.w_adv * loss_adv
+                    + self.w_rec * loss_reconstruction
                     + self.w_div * loss_div
                     + self.w_ngram * loss_ngram
                     + self.w_length * loss_length
@@ -338,6 +419,7 @@ class GANTrainer:
             'loss_ngram': loss_ngram.item(),
             'loss_length': loss_length.item(),
             'loss_stability': loss_stability.item(),
+            'loss_reconstruction': loss_reconstruction.item(),
             'entropy': div_results['token_entropy_value'],
         })
 
@@ -406,10 +488,12 @@ class GANTrainer:
 
         best_metric_value = float('inf') if minimize_metric else -float('inf')
         patience_counter = 0
-        self.history = []
+        # ``history`` is initialized for a new trainer and restored by load().
+        # Do not discard earlier epochs when genuinely resuming a GAN run.
 
         for epoch in range(self.epoch, epochs):
             self.epoch = epoch
+            self._set_gumbel_temperature(epoch)
             epoch_start = time.time()
 
             # Train epoch
@@ -427,10 +511,12 @@ class GANTrainer:
             self._log_epoch(epoch, epochs, metrics, elapsed)
 
             # Save metrics to history
-            self.history.append({'epoch': epoch + 1, **metrics})
+            self.history.append({'epoch': epoch + 1, 'gumbel_tau': self.gumbel_tau, **metrics})
 
             # LR Scheduler
-            g_loss_val = metrics.get('val_g_loss', metrics.get('g_loss', 0))
+            g_loss_val = metrics.get(
+                'val_loss_reconstruction', metrics.get('val_g_loss', metrics.get('g_loss', 0))
+            )
             if hasattr(self, 'scheduler_G'):
                 self.scheduler_G.step(g_loss_val)
 
@@ -476,6 +562,7 @@ class GANTrainer:
             'entropy': 0,
             'loss_adv': 0, 'loss_div': 0,
             'loss_ngram': 0, 'loss_length': 0, 'loss_stability': 0,
+            'loss_reconstruction': 0,
         }
         n_batches = 0
         accum_steps = self.accum_steps
@@ -487,45 +574,45 @@ class GANTrainer:
         self.opt_D.zero_grad()
         self.opt_G.zero_grad()
 
+        # FIX: track d_skipped across the *entire* accumulation window, not per-batch.
+        # If D was skipped for any batch in the window, we skip the D optimizer step.
+        d_skipped_in_window = False
+
         for batch_idx, batch in enumerate(loader):
-            # Parse batch
-            real_seqs, conditions = self._parse_batch(batch)
+            real_seqs, conditions, reconstruction_targets = self._parse_batch(batch)
+            metrics = self.train_step(
+                real_seqs, conditions, reconstruction_targets, loss_scale=loss_scale
+            )
 
-            # Forward + backward (gradients accumulate)
-            metrics = self.train_step(real_seqs, conditions, loss_scale=loss_scale)
+            if metrics.get('d_skipped', False):
+                d_skipped_in_window = True
 
-            # Step optimizers after accumulation window completes
             is_accum_boundary = (batch_idx + 1) % accum_steps == 0
             is_last_batch = (batch_idx + 1) == len(loader)
 
             if is_accum_boundary or is_last_batch:
-                # Clip gradients
+                # Clip and step G
                 self.scaler.unscale_(self.opt_G)
                 torch.nn.utils.clip_grad_norm_(self.G.parameters(), 1.0)
 
-                # Only unscale and step D if it wasn't skipped this accumulation window
-                d_was_skipped = metrics.get('d_skipped', False)
-                if not d_was_skipped:
+                # Only step D if it was NOT skipped in this entire window
+                if not d_skipped_in_window:
                     self.scaler.unscale_(self.opt_D)
                     torch.nn.utils.clip_grad_norm_(self.D.parameters(), 1.0)
-
-                # Step optimizers
-                if not d_was_skipped:
                     self.scaler.step(self.opt_D)
+
                 self.scaler.step(self.opt_G)
                 self.scaler.update()
 
-                # Reset gradients for next accumulation window
                 self.opt_D.zero_grad()
                 self.opt_G.zero_grad()
+                d_skipped_in_window = False   # reset for next window
 
-            # Accumulate metrics
             for k in epoch_metrics:
                 if k in metrics:
                     epoch_metrics[k] += metrics[k]
             n_batches += 1
 
-            # Log
             if (batch_idx + 1) % log_interval == 0:
                 d_gap = metrics.get('d_real', 0) - metrics.get('d_fake', 0)
                 logger.info(
@@ -538,24 +625,27 @@ class GANTrainer:
                     f"ent: {metrics.get('entropy', 0):.3f}"
                 )
 
-        # Average
         for k in epoch_metrics:
             epoch_metrics[k] /= max(n_batches, 1)
 
         return epoch_metrics
 
     def _parse_batch(self, batch) -> tuple:
-        """Parse batch into sequences and conditions."""
+        """Parse batch into inputs, conditions, and next-token targets."""
         if isinstance(batch, dict):
             # DataLoader returns dict with 'input_ids' (tokens)
             seqs = batch.get('input_ids', batch.get('tokens', batch.get('sequence')))
             conds = batch.get('condition', batch.get('features', batch.get('conditions')))
+            if not self.accept_conditions:
+                conds = None
+            targets = batch.get('target_ids')
         elif isinstance(batch, (list, tuple)):
             seqs = torch.tensor(batch[0]) if not isinstance(batch[0], torch.Tensor) else batch[0]
             conds = torch.tensor(batch[1]) if len(batch) > 1 and not isinstance(batch[1], torch.Tensor) else (batch[1] if len(batch) > 1 else None)
+            targets = None
         else:
             raise ValueError(f"Unexpected batch type: {type(batch)}")
-        return seqs, conds
+        return seqs, conds, targets
 
     def _validate_epoch(self, loader) -> Dict:
         """Evaluate on validation set without gradient computation."""
@@ -567,44 +657,60 @@ class GANTrainer:
             'd_real': 0, 'd_fake': 0,
             'entropy': 0,
             'loss_adv': 0, 'loss_div': 0,
-            'loss_ngram': 0, 'loss_length': 0,
+            'loss_ngram': 0, 'loss_length': 0, 'loss_reconstruction': 0,
         }
         n_batches = 0
 
         with torch.no_grad():
             for batch in loader:
-                real_seqs, conditions = self._parse_batch(batch)
+                real_seqs, conditions, reconstruction_targets = self._parse_batch(batch)
                 real_seqs = real_seqs.to(self.device)
                 if conditions is not None:
                     conditions = conditions.to(self.device)
+                if reconstruction_targets is not None:
+                    reconstruction_targets = reconstruction_targets.to(self.device)
 
                 batch_size = real_seqs.size(0)
 
                 with torch.amp.autocast('cuda', enabled=self.use_amp):
-                    # Discriminator on real
-                    real_onehot = F.one_hot(real_seqs, num_classes=self.D.vocab_size).float()
-                    if self.noise_std > 0:
-                        real_onehot = real_onehot + torch.randn_like(real_onehot) * self.noise_std
-                    d_real = self.D(real_onehot)
-                    real_labels = torch.ones_like(d_real) * (1.0 - self.label_smooth)
-                    loss_real = F.binary_cross_entropy_with_logits(d_real, real_labels)
-
-                    # Generate fake
+                    # FIX: no instance noise during validation — noise biases D
+                    # scores and makes val metrics not reflect real-world performance.
                     _, fake_logits = self._generate(batch_size, conditions)
                     fake_probs = F.softmax(fake_logits, dim=-1)
 
-                    # Discriminator on fake
+                    real_tokens_d = self._real_tokens_for_discriminator(
+                        real_seqs, reconstruction_targets, fake_probs.size(1)
+                    )
+                    real_onehot = F.one_hot(
+                        real_tokens_d, num_classes=self.D.vocab_size
+                    ).float()
+                    d_real = self.D(real_onehot)
+
                     d_fake = self.D(fake_probs)
-                    fake_labels = torch.zeros_like(d_fake) + (self.label_smooth * 0.5)
-                    loss_fake = F.binary_cross_entropy_with_logits(d_fake, fake_labels)
-
-                    d_loss = loss_real + loss_fake
-
-                    # Generator loss
-                    loss_adv = F.binary_cross_entropy_with_logits(d_fake, torch.ones_like(d_fake))
+                    if self.gan_loss == 'wgan_gp':
+                        # Gradient penalty is a training regularizer; validation
+                        # reports the held-out Wasserstein critic gap.
+                        d_loss = d_fake.mean() - d_real.mean()
+                        loss_adv = -d_fake.mean()
+                    else:
+                        real_labels = torch.ones_like(d_real) * (1.0 - self.label_smooth)
+                        fake_labels = torch.zeros_like(d_fake) + (self.label_smooth * 0.5)
+                        loss_real = F.binary_cross_entropy_with_logits(d_real, real_labels)
+                        loss_fake = F.binary_cross_entropy_with_logits(d_fake, fake_labels)
+                        d_loss = loss_real + loss_fake
+                        loss_adv = F.binary_cross_entropy_with_logits(d_fake, torch.ones_like(d_fake))
                     div_results = self.diversity_loss(fake_logits)
                     loss_div = div_results['total']
-                    g_loss = self.w_adv * loss_adv + self.w_div * loss_div
+                    loss_reconstruction = (
+                        self._reconstruction_loss(
+                            real_seqs, reconstruction_targets, conditions,
+                            deterministic_latent=True,
+                        ) if self.w_rec > 0 else fake_logits.new_tensor(0.0)
+                    )
+                    g_loss = (
+                        self.w_adv * loss_adv + self.w_div * loss_div
+                        + self.w_rec * loss_reconstruction
+                    )
 
                 epoch_metrics['d_loss'] += d_loss.item()
                 epoch_metrics['g_loss'] += g_loss.item()
@@ -613,6 +719,7 @@ class GANTrainer:
                 epoch_metrics['entropy'] += div_results['token_entropy_value']
                 epoch_metrics['loss_adv'] += loss_adv.item()
                 epoch_metrics['loss_div'] += loss_div.item()
+                epoch_metrics['loss_reconstruction'] += loss_reconstruction.item()
                 n_batches += 1
 
         for k in epoch_metrics:
@@ -637,7 +744,9 @@ class GANTrainer:
             f"ent: {metrics['entropy']:.3f} | "
             f"ngram: {metrics.get('loss_ngram', 0):.4f} | "
             f"len_pen: {metrics.get('loss_length', 0):.4f} | "
-            f"stab: {metrics.get('loss_stability', 0):.4f}"
+            f"stab: {metrics.get('loss_stability', 0):.4f} | "
+            f"recon: {metrics.get('loss_reconstruction', 0):.4f} | "
+            f"tau: {self.gumbel_tau:.3f}"
         )
 
         # Add validation metrics if available
@@ -672,8 +781,11 @@ class GANTrainer:
         if (epoch + 1) % 10 == 0:
             self.save(checkpoint_dir / f'epoch_{epoch+1}.pt')
 
-        # Best model based on validation/train g_loss
-        g_loss_key = 'val_g_loss' if 'val_g_loss' in metrics else 'g_loss'
+        # Use deterministic teacher-forced validation CE when available.
+        g_loss_key = (
+            'val_loss_reconstruction' if 'val_loss_reconstruction' in metrics
+            else ('val_g_loss' if 'val_g_loss' in metrics else 'g_loss')
+        )
         g_loss_val = metrics[g_loss_key]
 
         if g_loss_val < self.best_loss:
@@ -706,7 +818,8 @@ class GANTrainer:
         G = self.G
         for attr in ('vocab_size', 'embedding_dim', 'hidden_dim', 'latent_dim',
                       'max_length', 'num_layers', 'num_heads', 'dropout', 'condition_dim',
-                      'mem_tokens', 'esm_dim', 'gat_heads',
+                      'mem_tokens', 'esm_dim', 'gat_heads', 'gat_window', 'use_gat',
+                      'fusion_type',
                       'bidirectional', 'use_attention', 'pad_idx', 'sos_idx', 'eos_idx'):
             if hasattr(G, attr):
                 model_config[attr] = getattr(G, attr)
@@ -720,8 +833,13 @@ class GANTrainer:
             'opt_G': self.opt_G.state_dict(),
             'opt_D': self.opt_D.state_dict(),
             'scaler': self.scaler.state_dict(),
+            'scheduler_G': self.scheduler_G.state_dict() if hasattr(self, 'scheduler_G') else None,
             'config': self.config,
             'model_config': model_config,
+            'data_metadata': getattr(self, 'data_metadata', None),
+            'run_metadata': getattr(self, 'run_metadata', None),
+            'artifact_reportable': getattr(self, 'artifact_reportable', False),
+            'history': self.history,
             'best_loss': self.best_loss,
             'best_val_loss': self.best_val_loss,
         }, path)
@@ -742,27 +860,26 @@ class GANTrainer:
         gen_key = 'generator' if 'generator' in ckpt else 'generator_state_dict'
         dis_key = 'discriminator' if 'discriminator' in ckpt else 'discriminator_state_dict'
 
-        # Load model weights with strict=False to handle architectural changes
-        # (e.g., bidirectional->unidirectional, hidden_dim changes, etc.)
+        # A partially loaded generator invalidates a reportable experiment.
+        # Architecture-specific ablations construct the matching model before
+        # reaching this point, so strict loading is the safe default.
         try:
-            incompatible = self.G.load_state_dict(ckpt[gen_key], strict=False)
-            if incompatible.missing_keys:
-                logger.warning(f"Generator missing keys: {incompatible.missing_keys[:5]}...")
-            if incompatible.unexpected_keys:
-                logger.warning(f"Generator unexpected keys: {incompatible.unexpected_keys[:5]}...")
-        except Exception as e:
-            logger.error(f"Error loading generator: {e}. Skipping.")
+            self.G.load_state_dict(ckpt[gen_key], strict=True)
+        except Exception as exc:
+            raise RuntimeError(f"Generator checkpoint is incompatible with the configured model: {path}") from exc
 
-        try:
-            incompatible = self.D.load_state_dict(ckpt[dis_key], strict=False)
-            if incompatible.missing_keys:
-                logger.warning(f"Discriminator missing keys: {incompatible.missing_keys[:5]}...")
-            if incompatible.unexpected_keys:
-                logger.warning(f"Discriminator unexpected keys: {incompatible.unexpected_keys[:5]}...")
-            d_loaded_ok = True
-        except Exception as e:
-            logger.error(f"Error loading discriminator: {e}. Using fresh D weights.")
+        if dis_key not in ckpt:
+            # Expected when Phase 2 starts from an MLE-only warm-up checkpoint.
+            logger.info("Parent checkpoint has no discriminator; using fresh D weights")
             d_loaded_ok = False
+        else:
+            try:
+                self.D.load_state_dict(ckpt[dis_key], strict=True)
+                d_loaded_ok = True
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Discriminator checkpoint is incompatible with the configured model: {path}"
+                ) from exc
 
         # Load optimizers separately: skip opt_D if D architecture changed
         # (old optimizer momentum buffers would have wrong shapes → RuntimeError at step)
@@ -836,6 +953,12 @@ class GANTrainer:
                 # Re-create a fresh scaler
                 self.scaler = torch.amp.GradScaler('cuda', enabled=True)
                 logger.info("Using fresh AMP scaler (scale=65536.0)")
+            if ckpt.get('scheduler_G') and hasattr(self, 'scheduler_G'):
+                try:
+                    self.scheduler_G.load_state_dict(ckpt['scheduler_G'])
+                    logger.info("Loaded G scheduler state")
+                except (KeyError, RuntimeError, ValueError) as exc:
+                    raise RuntimeError(f"Invalid scheduler state in {path}") from exc
         else:
             logger.info("Skipping optimizer/scaler state (--fresh-optimizer): using fresh optimizers and AMP scaler")
             self._init_optimizers()
@@ -846,6 +969,7 @@ class GANTrainer:
         self.global_step = ckpt.get('global_step', 0)
         self.best_loss = ckpt.get('best_loss', float('inf'))
         self.best_val_loss = ckpt.get('best_val_loss', float('inf'))
+        self.history = list(ckpt.get('history') or [])
         logger.info(f"Loaded model from epoch {self.epoch}")
         return self.epoch
 
@@ -868,6 +992,7 @@ class ConditionalGANTrainer(GANTrainer):
         condition_dim: int = 8,
     ):
         super().__init__(generator, discriminator, config, device)
+        self.accept_conditions = True
         self.condition_dim = condition_dim
         self.w_feature = config.get('feature_loss_weight', 0.1)
 

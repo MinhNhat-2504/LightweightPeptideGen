@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "dataset_name": "REPLACE_WITH_DATASET_NAME",
+  "curation_protocol": "REPLACE_WITH_VERSIONED_PROTOCOL_OR_DOCUMENT_PATH",
+  "homology_clustering": {
+    "tool": "MMseqs2",
+    "version": "REPLACE_WITH_EXACT_MMSEQS_VERSION",
+    "command": "mmseqs easy-cluster dataset/clustering_input.fasta dataset/mmseqs dataset/mmseqs_tmp --min-seq-id 0.4 -c 0.8 --cov-mode 0",
+    "minimum_sequence_identity": 0.4,
+    "minimum_coverage": 0.8,
+    "coverage_mode": 0,
+    "output_format": "mmseqs_rep_member",
+    "representative_policy": "one_deterministic_representative_per_cluster"
+  },
+  "sources": [
+    {
+      "name": "DRAMP",
+      "path": "../dataset/raw/DRAMP_validated.fasta",
+      "format": "fasta",
+      "label": 1,
+      "version": "REPLACE_WITH_DATABASE_RELEASE",
+      "retrieval_date": "YYYY-MM-DD",
+      "url": "http://dramp.cpu-bioinfor.org/",
+      "license": "REPLACE_WITH_LICENSE_OR_ACCESS_TERMS",
+      "evidence_policy": "experimentally_validated_only",
+      "prefiltered": true,
+      "prefilter_provenance": "REPLACE_WITH_DATABASE_QUERY_OR_VERSIONED_SCRIPT_THAT_CREATED_THIS_VALIDATED_FASTA",
+      "label_definition": "AMP=1: experimentally validated antimicrobial activity under the declared DRAMP evidence filter",
+      "sha256": "REPLACE_WITH_64_CHARACTER_SHA256"
+    },
+    {
+      "name": "AMPBenchmark-negative",
+      "path": "../dataset/raw/AMPBenchmark_negative.csv",
+      "format": "csv",
+      "sequence_column": "sequence",
+      "id_column": "id",
+      "label": 0,
+      "version": "REPLACE_WITH_COMMIT_OR_RELEASE",
+      "retrieval_date": "YYYY-MM-DD",
+      "url": "https://github.com/BioGenies/AMPBenchmark",
+      "license": "REPLACE_WITH_REPOSITORY_LICENSE",
+      "evidence_policy": "not_applicable_negative",
+      "label_definition": "AMP=0: negative example according to the AMPBenchmark release annotation",
+      "sha256": "REPLACE_WITH_64_CHARACTER_SHA256"
+    }
+  ]
+}

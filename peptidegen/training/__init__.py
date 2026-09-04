@@ -7,20 +7,25 @@ Classes:
 
 Loss Functions:
     - DiversityLoss: Prevents mode collapse via entropy & batch diversity
-    - FeatureMatchingLoss: Stabilizes training via feature matching
+    - NgramDiversityLoss: Bigram/trigram concentration penalty
+    - LengthPenaltyLoss: Cumulative-EOS supervision for length control
+    - FeatureMatchingLoss: Stabilises training via feature matching
     - ReconstructionLoss: Cross-entropy reconstruction loss
-    - WassersteinLoss: WGAN loss functions
-    - GradientPenalty: WGAN-GP gradient penalty
+    - StabilityBiasLoss: Differentiable instability-index penalty
+
+Removed: WassersteinLoss, GradientPenalty (dead code; WGAN-GP logic lives
+in GANTrainer._gradient_penalty / train_step).
 """
 
 from .trainer import GANTrainer, ConditionalGANTrainer
 from .rl import SCSTTrainer, MultiObjectiveReward
 from .losses import (
     DiversityLoss,
+    NgramDiversityLoss,
+    LengthPenaltyLoss,
     FeatureMatchingLoss,
     ReconstructionLoss,
-    WassersteinLoss,
-    GradientPenalty,
+    StabilityBiasLoss,
 )
 
 __all__ = [
@@ -29,8 +34,9 @@ __all__ = [
     'SCSTTrainer',
     'MultiObjectiveReward',
     'DiversityLoss',
+    'NgramDiversityLoss',
+    'LengthPenaltyLoss',
     'FeatureMatchingLoss',
     'ReconstructionLoss',
-    'WassersteinLoss',
-    'GradientPenalty',
+    'StabilityBiasLoss',
 ]

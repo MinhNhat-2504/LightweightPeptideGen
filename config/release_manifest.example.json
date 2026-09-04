@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "repository_url": "https://github.com/MinhNhat-2504/LightweightPeptideGen",
+  "commit": "REPLACE_WITH_IMMUTABLE_COMMIT",
+  "archive_doi": "REPLACE_WITH_ZENODO_OR_EQUIVALENT_DOI",
+  "code_license": "REPLACE_WITH_LICENSE",
+  "data_availability": "REPLACE_WITH_DATA_ACCESS_AND_REDISTRIBUTION_STATEMENT",
+  "baseline_policy": "REPLACE_WITH_ONE_OF_official_retraining__inspired_controls_only__literature_context_only",
+  "baseline_evidence": "REPLACE_WITH_MANIFEST_OR_STATEMENT_IDENTIFYING_WHICH_NUMERICAL_BASELINES_ENTER_THE_PAPER",
+  "environment_lock": "requirements-revision.txt",
+  "environment_lock_sha256": "REPLACE_WITH_64_CHARACTER_SHA256"
+}
