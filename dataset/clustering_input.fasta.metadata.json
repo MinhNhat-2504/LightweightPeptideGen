@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "reportable": false,
+  "path_base": "metadata_file_parent",
+  "purpose": "intermediate input for the manifest-declared homology clustering command",
+  "manifest": {
+    "path": "../config/dataset_manifest.interim.json",
+    "sha256": "beca5bcacf8a731bde16db303f964491635b7bfcb01245961dc8e6a52b126abf"
+  },
+  "filters": {
+    "minimum_length": 5,
+    "maximum_length": 50,
+    "alphabet": "ACDEFGHIKLMNPQRSTVWY"
+  },
+  "records": 146962,
+  "output": {
+    "path": "clustering_input.fasta",
+    "sha256": "4cb6c5e4056f6e41a7f3f559d09aa97ed962015df24bdbcef2fb68e523288f7b"
+  },
+  "next_step": "Run homology_clustering.command from the manifest, then rerun the dataset builder with --cluster-tsv and the matching --cluster-format."
+}

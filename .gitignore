@@ -16,6 +16,9 @@ dataset/*.csv
 dataset/*.fasta
 dataset/raw/
 dataset/rebuilt/
+dataset/derived_from_legacy/
+dataset/clustering_input.fasta
+dataset/mmseqs*
 dataset/amps_pdb/
 checkpoints/
 results/

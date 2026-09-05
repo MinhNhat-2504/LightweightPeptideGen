@@ -395,7 +395,12 @@ class MultimodalFusionGenerator(nn.Module):
             alive = (~finished).float()
             lp = lp * alive
             # per-step policy entropy (only count positions before <EOS>)
-            ent = -(logp_all.exp() * logp_all).sum(dim=-1) * alive
+            # Masked tokens carry logp = -inf, and exp(-inf) * (-inf) evaluates to
+            # NaN rather than the mathematically correct 0 (lim_{p->0} p*log p = 0).
+            # Left unguarded this poisons the SCST loss, the gradients and finally
+            # the weights, so the next rollout feeds NaN into torch.multinomial.
+            logp_finite = logp_all.masked_fill(torch.isinf(logp_all), 0.0)
+            ent = -(logp_all.exp() * logp_finite).sum(dim=-1) * alive
             toks.append(nxt)
             logps.append(lp)
             ents.append(ent)
