@@ -57,3 +57,8 @@ Thumbs.db
 *.code-workspace
 .vscode/
 .idea/
+
+# Log cua cac lan chay — khong duoc lam ban cay git,
+# vi dirty_worktree=true se khien moi artifact mat tu cach bao cao.
+*.log
+nohup.out
