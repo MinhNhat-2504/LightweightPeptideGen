@@ -1,0 +1,14 @@
+[
+ {
+  "name": "DBAASP-hemolytic",
+  "label": 1,
+  "n": 119,
+  "sha256": "45c486f9cc6c4f5d9c7b0678703c60eb9fbe0944d15a338bdfc93dcb89b6a3a2"
+ },
+ {
+  "name": "DBAASP-nonhemolytic",
+  "label": 0,
+  "n": 82,
+  "sha256": "ad04706ea57e84ec66ad15507e3476f465af7ff86d8fab93d06d801321b99f00"
+ }
+]

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "reportable": false,
+  "path_base": "metadata_file_parent",
+  "purpose": "intermediate input for the manifest-declared homology clustering command",
+  "manifest": {
+    "path": "../config/hemolysis_manifest.interim.json",
+    "sha256": "57d7bdd325e28ecc20fa87bc0952909e9fc90c2eab078ccf695d74c438d9ba8f"
+  },
+  "filters": {
+    "minimum_length": 5,
+    "maximum_length": 50,
+    "alphabet": "ACDEFGHIKLMNPQRSTVWY"
+  },
+  "records": 256,
+  "output": {
+    "path": "hemolysis_clustering_input.fasta",
+    "sha256": "085946a88cfd93048d298394c0bda66a59cbcac1d120983c47ff35932d48f3ad"
+  },
+  "next_step": "Run homology_clustering.command from the manifest, then rerun the dataset builder with --cluster-tsv and the matching --cluster-format."
+}

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "dataset_name": "LightweightPeptideGen-hemolysis-interim-2026-09-07",
+  "curation_protocol": "INTERIM, NOT FOR SUBMISSION. Human-erythrocyte hemolysis endpoint derived from the bundled DBAASP activity rows; threshold awaiting author ratification.",
+  "homology_clustering": {
+    "tool": "MMseqs2",
+    "version": "17-b804f (commit b804fbe384e6f6c9fe96322ec0e92d48bccd0a42)",
+    "command": "mmseqs easy-cluster dataset/hemolysis_clustering_input.fasta dataset/hemo_mmseqs dataset/hemo_mmseqs_tmp --min-seq-id 0.4 -c 0.8 --cov-mode 0",
+    "minimum_sequence_identity": 0.4,
+    "minimum_coverage": 0.8,
+    "coverage_mode": 0,
+    "output_format": "mmseqs_rep_member",
+    "representative_policy": "one_deterministic_representative_per_cluster"
+  },
+  "sources": [
+    {
+      "name": "DBAASP-hemolytic",
+      "path": "../dataset/hemolysis_sources/DBAASP-hemolytic.csv",
+      "format": "csv",
+      "sequence_column": "sequence",
+      "id_column": "id",
+      "label": 1,
+      "version": "DBAASP activity export bundled with the project (release not recorded)",
+      "retrieval_date": "unknown (original download date not recorded)",
+      "url": "https://dbaasp.org/",
+      "license": "unverified (interim source; confirm from the official export)",
+      "evidence_policy": "curated_positive_release",
+      "prefiltered": true,
+      "prefilter_provenance": "Derived 2026-09-07 from dataset/raw/hemolytic-and-cytotoxic-activities.csv (DBAASP-style activity rows). Endpoint restricted to HUMAN ERYTHROCYTES. Hemolytic = at least one measurement of >=50% hemolysis at <=100 uM, or HC50 <=100 uM. Non-hemolytic = no such evidence AND at least one measurement of <=20% hemolysis at >=50 uM, or HC50 >100 uM, or a 'not active up to >=50 uM' note. ug/ml converted to uM using the molecular weight computed from the sequence. Peptides matching neither rule were dropped as ambiguous. THIS THRESHOLD IS AN INTERIM CHOICE AND REQUIRES AUTHOR RATIFICATION before any reportable use.",
+      "label_definition": "hemolysis=1: >=50% hemolysis of human erythrocytes at <=100 uM, or HC50 <=100 uM",
+      "sha256": "45c486f9cc6c4f5d9c7b0678703c60eb9fbe0944d15a338bdfc93dcb89b6a3a2"
+    },
+    {
+      "name": "DBAASP-nonhemolytic",
+      "path": "../dataset/hemolysis_sources/DBAASP-nonhemolytic.csv",
+      "format": "csv",
+      "sequence_column": "sequence",
+      "id_column": "id",
+      "label": 0,
+      "version": "DBAASP activity export bundled with the project (release not recorded)",
+      "retrieval_date": "unknown (original download date not recorded)",
+      "url": "https://dbaasp.org/",
+      "license": "unverified (interim source; confirm from the official export)",
+      "evidence_policy": "not_applicable_negative",
+      "prefiltered": true,
+      "prefilter_provenance": "Derived 2026-09-07 from dataset/raw/hemolytic-and-cytotoxic-activities.csv (DBAASP-style activity rows). Endpoint restricted to HUMAN ERYTHROCYTES. Hemolytic = at least one measurement of >=50% hemolysis at <=100 uM, or HC50 <=100 uM. Non-hemolytic = no such evidence AND at least one measurement of <=20% hemolysis at >=50 uM, or HC50 >100 uM, or a 'not active up to >=50 uM' note. ug/ml converted to uM using the molecular weight computed from the sequence. Peptides matching neither rule were dropped as ambiguous. THIS THRESHOLD IS AN INTERIM CHOICE AND REQUIRES AUTHOR RATIFICATION before any reportable use.",
+      "label_definition": "hemolysis=0: <=20% hemolysis at >=50 uM, or HC50 >100 uM, or not active up to >=50 uM",
+      "sha256": "c52168e4f436818f9507f5be4a07bb0684cec100fe7d7feafe9ab0ee2f99226f"
+    }
+  ]
+}
