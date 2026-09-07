@@ -20,6 +20,10 @@ AMP_ORACLE="${AMP_ORACLE:-results/oracles/amp/oracle_amp.pkl}"
 WARMUP_EPOCHS="${WARMUP_EPOCHS:-10}"
 GAN_EPOCHS="${GAN_EPOCHS:-50}"
 SCST_STEPS="${SCST_STEPS:-2000}"
+# Neo KL ve chinh sach GAN goc. Bat buoc: khong co no, oracle AMP bi khai thac
+# (no cham chuoi toan W/F la 0.997 nhung cham AMP that chi 0.360) va chinh sach
+# sup che do — do duoc: 6 loai acid amin, W+F 94.3%, K+R 0%.
+KL_COEF="${KL_COEF:-0.1}"
 NUM_GEN="${NUM_GEN:-1000}"
 CONTROLLABILITY_N_PER="${CONTROLLABILITY_N_PER:-200}"
 ESM2_REVISION="${ESM2_REVISION:-6fbf070e65b0b7291e7bbcd451118c216cff79d8}"
@@ -65,6 +69,7 @@ for seed in "${SEEDS[@]}"; do
       --oracle-id ESM2Oracle_AMP_reward --steps "$SCST_STEPS" \
       --batch-size 64 --lr 1e-5 \
       --w-ii-screen 0.5 --w-amp 0.5 --w-hemolysis 0 \
+      --kl-coef "$KL_COEF" \
       --seed "$seed" --out "$final"
   else
     echo "--- [3/4] SCST da co, bo qua ---"

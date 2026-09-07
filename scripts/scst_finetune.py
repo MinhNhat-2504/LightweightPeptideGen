@@ -112,6 +112,9 @@ def main():
     ap.add_argument("--w-amp", type=float, default=0.33)
     ap.add_argument("--w-hemolysis", type=float, default=0.33)
     ap.add_argument("--target-ii", type=float, default=40.0)
+    ap.add_argument("--kl-coef", type=float, default=0.0,
+                    help="weight of the KL penalty anchoring the policy to the "
+                         "pre-SCST (GAN) generator; 0 disables it")
     ap.add_argument("--entropy-coef", type=float, default=0.02,
                     help="entropy bonus weight; >0 fights mode-collapse/low diversity")
     ap.add_argument("--condition-csv", default="dataset/train.csv",
@@ -177,8 +180,17 @@ def main():
         target_ii=args.target_ii,
         use_heuristic_fallback=args.allow_heuristic_reward,
     )
+    ref_G = None
+    if args.kl_coef > 0:
+        import copy
+        ref_G = copy.deepcopy(G).to(device).eval()
+        for _p in ref_G.parameters():
+            _p.requires_grad_(False)
+        logger.info("Reference policy frozen from %s for the KL anchor", args.checkpoint)
+
     trainer = SCSTTrainer(G, reward, VOCAB, device=device, lr=args.lr,
-                          entropy_bonus=args.entropy_coef)
+                          entropy_bonus=args.entropy_coef,
+                          ref_generator=ref_G, kl_coef=args.kl_coef)
 
     cond_dim = getattr(G, "condition_dim", None)
     condition_pool = None
@@ -260,7 +272,8 @@ def main():
                 f"weights II-screen/AMP/hemolysis="
                 f"{args.w_ii_screen}/{args.w_amp}/{args.w_hemolysis}")
 
-    run = {"scst_loss": 0.0, "reward_sample": 0.0, "advantage": 0.0, "entropy": 0.0}
+    run = {"scst_loss": 0.0, "reward_sample": 0.0, "advantage": 0.0, "entropy": 0.0,
+           "kl_to_ref": 0.0}
     history = []
     for step in range(1, args.steps + 1):
         if condition_pool is not None:
@@ -277,7 +290,8 @@ def main():
             logger.info(f"step {step}/{args.steps} | loss={run['scst_loss']/n:.4f} "
                         f"| R_sample={run['reward_sample']/n:.4f} "
                         f"| adv={run['advantage']/n:.4f} "
-                        f"| entropy={run['entropy']/n:.3f}")
+                        f"| entropy={run['entropy']/n:.3f}"
+                        + (f" | KL={run['kl_to_ref']/n:.3f}" if args.kl_coef > 0 else ""))
             run = {k: 0.0 for k in run}
 
     # save (sampler-loadable format)
@@ -328,6 +342,7 @@ def main():
                     "batch_size": args.batch_size,
                     "learning_rate": args.lr,
                     "entropy_coefficient": args.entropy_coef,
+                    "kl_coefficient": args.kl_coef,
                     "seed": args.seed,
                     "reward": reward.describe(),
                     "amp_oracle_id": args.oracle_id if amp_oracle is not None else None,

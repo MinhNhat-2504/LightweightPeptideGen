@@ -237,6 +237,10 @@ class SCSTTrainer:
         lr:           Learning rate (default 1e-5).
         entropy_bonus: Coefficient for entropy regularisation to prevent
                       mode collapse during RL fine-tuning (default 0).
+        ref_generator: Frozen copy of the pre-SCST policy. When given together
+                      with ``kl_coef > 0`` the sampled trajectory is charged a
+                      KL penalty for drifting away from it.
+        kl_coef:      Weight of that penalty (0 disables it).
     """
 
     def __init__(
@@ -247,6 +251,8 @@ class SCSTTrainer:
         device: Optional[torch.device] = None,
         lr: float = 1e-5,
         entropy_bonus: float = 0.0,
+        ref_generator: Optional[nn.Module] = None,
+        kl_coef: float = 0.0,
     ):
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.G = generator.to(self.device)
@@ -254,6 +260,17 @@ class SCSTTrainer:
         self.vocab = vocab
         self.opt = AdamW(self.G.parameters(), lr=lr, weight_decay=1e-4)
         self.entropy_bonus = entropy_bonus
+        self.kl_coef = float(kl_coef)
+        self.ref = None
+        if self.kl_coef > 0.0 and ref_generator is not None:
+            self.ref = ref_generator.to(self.device).eval()
+            for p in self.ref.parameters():
+                p.requires_grad_(False)
+            logger.info("KL anchor enabled | kl_coef=%.4g", self.kl_coef)
+        elif self.kl_coef > 0.0:
+            logger.warning("kl_coef=%.4g requested but no reference policy given; "
+                           "KL penalty disabled.", self.kl_coef)
+            self.kl_coef = 0.0
 
         logger.info(
             "SCSTTrainer initialised | oracle_id='%s' | "
@@ -289,7 +306,23 @@ class SCSTTrainer:
 
         r_sample = self.reward_fn(self._decode(sample_tok)).to(self.device)
         r_greedy = self.reward_fn(self._decode(greedy_tok)).to(self.device)
-        advantage = r_sample - r_greedy     # (B,)
+
+        # KL anchor to the pre-SCST policy.
+        #
+        # The reward models are classifiers, so they extrapolate far outside the
+        # data they were fitted on: measured on this project, the AMP oracle
+        # scores W/F-only strings 0.997 while scoring genuine AMPs 0.360. Left
+        # unchecked the policy walks into that blind spot and collapses. Charging
+        # the sampled trajectory for its single-sample KL estimate
+        # log pi(y) - log pi_ref(y) keeps it near the GAN behaviour, exactly as
+        # RLHF anchors a fine-tuned policy to its reference model.
+        kl = torch.zeros_like(r_sample)
+        if self.kl_coef > 0.0 and self.ref is not None:
+            with torch.no_grad():
+                logp_ref = self.ref.sequence_logprob(z, sample_tok, conditions)
+            kl = logp.detach() - logp_ref                        # (B,)
+
+        advantage = (r_sample - self.kl_coef * kl) - r_greedy     # (B,)
 
         # SCST policy-gradient loss
         # Entropy bonus counteracts mode collapse from reward saturation.
@@ -308,4 +341,5 @@ class SCSTTrainer:
             'reward_greedy': float(r_greedy.mean().item()),
             'advantage':     float(advantage.mean().item()),
             'entropy':       float(entropy.mean().item()),
+            'kl_to_ref':     float(kl.mean().item()),
         }

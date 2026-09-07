@@ -417,6 +417,46 @@ class MultimodalFusionGenerator(nn.Module):
         entropy = ent_stack.sum(dim=1) / lengths                 # (B,)
         return tokens, logp_sum, entropy
 
+    def sequence_logprob(
+        self,
+        z: torch.Tensor,
+        tokens: torch.Tensor,
+        condition: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Summed log-prob of already-chosen ``tokens`` under this policy.
+
+        Mirrors :meth:`rl_rollout` exactly — same memory, same causal mask, the
+        same generation masking per step, and the same "credit only the prefix
+        up to <EOS>" rule — but teacher-forces the given tokens instead of
+        sampling. One decoder pass rather than T, so it is cheap.
+
+        Used to score a trajectory sampled from the current policy under a
+        frozen reference policy, which gives the single-sample KL estimate
+        ``log pi(y) - log pi_ref(y)`` that anchors SCST to the GAN behaviour.
+        """
+        memory = self._build_memory(z, condition)
+        device = memory.device
+        B, T = tokens.shape
+        sos = torch.full((B, 1), self.sos_idx, dtype=torch.long, device=device)
+        inp = torch.cat([sos, tokens[:, :-1]], dim=1)            # (B, T)
+        tgt = self.pos_encoding(self.embedding(inp))
+        out = self.decoder(tgt, memory, tgt_mask=self._causal_mask(T, device))
+        logits = self.output_projection(out)                     # (B, T, V)
+
+        # finished[:, t] == True  <=>  an <EOS> was emitted strictly before t
+        is_eos = tokens == self.eos_idx
+        finished = torch.cat(
+            [torch.zeros(B, 1, dtype=torch.bool, device=device),
+             is_eos.cumsum(dim=1)[:, :-1] > 0],
+            dim=1,
+        )
+        total = torch.zeros(B, device=device)
+        for step in range(T):
+            lg = self._mask_generation_logits(logits[:, step, :], step, 5, finished[:, step])
+            lp = F.log_softmax(lg, dim=-1).gather(1, tokens[:, step].unsqueeze(1)).squeeze(1)
+            total = total + lp * (~finished[:, step]).float()
+        return total
+
     @torch.no_grad()
     def generate(
         self,
