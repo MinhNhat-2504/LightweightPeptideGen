@@ -24,6 +24,11 @@ SCST_STEPS="${SCST_STEPS:-2000}"
 # (no cham chuoi toan W/F la 0.997 nhung cham AMP that chi 0.360) va chinh sach
 # sup che do — do duoc: 6 loai acid amin, W+F 94.3%, K+R 0%.
 KL_COEF="${KL_COEF:-0.1}"
+# Batch size rieng cho tung giai doan. SCST giu them mot ban sao model tham
+# chieu cho KL anchor nen ton VRAM hon GAN; tren GPU dung chung voi nguoi khac,
+# ha SCST_BATCH xuong 32 hoac 16 khi gap CUDA out of memory.
+GAN_BATCH="${GAN_BATCH:-64}"
+SCST_BATCH="${SCST_BATCH:-64}"
 NUM_GEN="${NUM_GEN:-1000}"
 CONTROLLABILITY_N_PER="${CONTROLLABILITY_N_PER:-200}"
 ESM2_REVISION="${ESM2_REVISION:-6fbf070e65b0b7291e7bbcd451118c216cff79d8}"
@@ -56,7 +61,7 @@ for seed in "${SEEDS[@]}"; do
     echo "--- [2/4] Huan luyen GAN (buoc lau nhat) ---"
     "$PYTHON_BIN" train.py --config "$CONFIG" --conditional \
       --resume "$warmup" --dataset-report "$DATA_REPORT" \
-      --epochs "$GAN_EPOCHS" --batch-size 64 --seed "$seed" \
+      --epochs "$GAN_EPOCHS" --batch-size "$GAN_BATCH" --seed "$seed" \
       --checkpoint-dir "$gan_dir"
   else
     echo "--- [2/4] GAN da co, bo qua ---"
@@ -67,7 +72,7 @@ for seed in "${SEEDS[@]}"; do
     "$PYTHON_BIN" scripts/scst_finetune.py --checkpoint "$gan_dir/best_model.pt" \
       --condition-csv dataset/rebuilt/train.csv --amp-oracle "$AMP_ORACLE" \
       --oracle-id ESM2Oracle_AMP_reward --steps "$SCST_STEPS" \
-      --batch-size 64 --lr 1e-5 \
+      --batch-size "$SCST_BATCH" --lr 1e-5 \
       --w-ii-screen 0.5 --w-amp 0.5 --w-hemolysis 0 \
       --kl-coef "$KL_COEF" \
       --seed "$seed" --out "$final"
