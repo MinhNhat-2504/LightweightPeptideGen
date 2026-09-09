@@ -132,7 +132,10 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.model_revision)
     model = EsmForProteinFolding.from_pretrained(args.model, revision=args.model_revision)
     model = model.to(device)
-    model.esm = model.esm.half()  # halve the language-model trunk to save VRAM
+    if device.type == "cuda":
+        # Halve the language-model trunk to save VRAM. Only on CUDA: fp16 matmul
+        # is emulated on CPU and makes folding far slower rather than cheaper.
+        model.esm = model.esm.half()
     model.eval()
 
     input_path = Path(args.input)
@@ -180,6 +183,14 @@ def main():
                 # confidence on CA atom (index 1)
                 plddt = plddt[..., 1]
             mean_plddt = float(plddt.mean().item())
+            # HuggingFace EsmForProteinFolding returns pLDDT on a 0-1 scale,
+            # whereas the ESMFold and AlphaFold literature — and the >=70
+            # confidence threshold used below and in the manuscript — are on
+            # 0-100. Without this the >=70 fraction is 0% for every input,
+            # however good the structures are. A real pLDDT never sits at or
+            # below 1 on the 0-100 scale, so the test is unambiguous.
+            if mean_plddt <= 1.0:
+                mean_plddt *= 100.0
             ptm = float(out["ptm"].item()) if "ptm" in out else float("nan")
 
             row = {"id": name, "sequence": seq, "length": len(seq),
