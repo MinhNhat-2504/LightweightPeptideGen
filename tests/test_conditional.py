@@ -11,6 +11,8 @@ from peptidegen.data.dataset import ConditionalPeptideDataset
 from peptidegen.data.vocabulary import VOCAB
 from peptidegen.evaluation.quality_filter import PeptideQualityFilter, QualityCriteria
 
+from tests._dataset_path import train_csv
+
 
 def test_conditional_dataset():
     """Test ConditionalPeptideDataset."""
@@ -21,7 +23,7 @@ def test_conditional_dataset():
     # Test ConditionalPeptideDataset
     print("\n1. Loading ConditionalPeptideDataset from CSV...")
     dataset = ConditionalPeptideDataset.from_csv(
-        'dataset/train.csv',
+        str(train_csv()),
         vocab=VOCAB,
         max_length=50,
         min_length=5,
@@ -65,7 +67,7 @@ def test_quality_filter():
 
     # Load dataset for test sequences
     dataset = ConditionalPeptideDataset.from_csv(
-        'dataset/train.csv',
+        str(train_csv()),
         vocab=VOCAB,
         max_length=50,
         min_length=5,

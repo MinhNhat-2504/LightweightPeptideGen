@@ -115,10 +115,50 @@ def external_table(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def resolve_dataset_dir(root: Path, explicit: str | None) -> Path:
+    """Which dataset build to export numbers from.
+
+    Hard-coding dataset/rebuilt/ silently exports the interim build - the one whose
+    manifest declares itself NOT FOR SUBMISSION - into the manuscript, and reports
+    success while doing it.
+    """
+    if explicit:
+        return Path(explicit) if Path(explicit).is_absolute() else root / explicit
+    config = root / "config/revision.yaml"
+    if config.exists():
+        for line in config.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("train_csv:"):
+                value = stripped.split(":", 1)[1].strip().strip('"').strip("'")
+                if value:
+                    return root / Path(value).parent
+    return root / "dataset/rebuilt"
+
+
+def resolve_benchmark(root: Path, dataset_dir: Path, explicit: str | None) -> Path:
+    """Main benchmark for the run that used `dataset_dir`.
+
+    The drivers tag their output directory with the dataset directory name so that
+    a rerun on new data cannot overwrite or be confused with an earlier run.
+    """
+    if explicit:
+        return Path(explicit) if Path(explicit).is_absolute() else root / explicit
+    tagged = root / f"results/ablations/full__{dataset_dir.name}/benchmark.json"
+    if tagged.is_file():
+        return tagged
+    return root / "results/ablations/full/benchmark.json"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".")
     parser.add_argument("--paper-dir", required=True)
+    parser.add_argument("--dataset-dir", default=None,
+                        help="dataset build to export from; defaults to "
+                             "config/revision.yaml data.train_csv")
+    parser.add_argument("--benchmark", default=None,
+                        help="path to the main benchmark.json; defaults to the run "
+                             "directory matching the dataset directory")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     paper_dir = Path(args.paper_dir).resolve()
@@ -128,13 +168,18 @@ def main() -> None:
     subprocess.run([
         sys.executable, str(root / "scripts/audit_artifacts.py"),
         "--root", str(root), "--out", str(audit_path), "--require-complete",
+        "--dataset-dir", str(resolve_dataset_dir(root, args.dataset_dir)),
     ], check=True)
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     if audit.get("submission_ready") is not True:
         raise ValueError("artifact audit did not mark the repository submission-ready")
 
-    dataset = load_report(root / "dataset/rebuilt/dataset_build_report.json", "dataset report")
-    benchmark = load_report(root / "results/ablations/full/benchmark.json", "main benchmark")
+    dataset_dir = resolve_dataset_dir(root, args.dataset_dir)
+    benchmark_path = resolve_benchmark(root, dataset_dir, args.benchmark)
+    print(f"dataset build : {dataset_dir}")
+    print(f"main benchmark: {benchmark_path}")
+    dataset = load_report(dataset_dir / "dataset_build_report.json", "dataset report")
+    benchmark = load_report(benchmark_path, "main benchmark")
     external = load_report(root / "results/external_validation_report.json", "external validation")
     esmfold = load_report(root / "results/esmfold_summary.json", "ESMFold summary")
     load_report(root / "results/controllability_summary.json", "controllability summary")

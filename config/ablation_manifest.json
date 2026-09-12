@@ -1,7 +1,13 @@
 {
   "schema_version": 1,
   "full_variant": "full",
-  "expected_seeds": [42, 123, 456, 789, 1337],
+  "expected_seeds": [
+    42,
+    123,
+    456,
+    789,
+    1337
+  ],
   "expected_sequences_per_seed": 1000,
   "metrics": [
     "stable_rate_ii_lt_40_percent",
@@ -10,17 +16,84 @@
     "uniqueness_ratio"
   ],
   "variants": [
-    {"id": "full", "label": "Full model", "change": "none", "model_key": "full", "benchmark_report": "../results/ablations/full/benchmark.json"},
-    {"id": "no_esm2", "label": "Without ESM-2 warm-up", "change": "MLE warm-up uses --no-esm", "model_key": "no_esm2", "benchmark_report": "../results/ablations/no_esm2/benchmark.json"},
-    {"id": "no_gatv2", "label": "Without GATv2", "change": "all stages use --no-gat", "model_key": "no_gatv2", "benchmark_report": "../results/ablations/no_gatv2/benchmark.json"},
-    {"id": "concat_fusion", "label": "Concatenation fusion", "change": "--fusion-type concat", "model_key": "concat_fusion", "benchmark_report": "../results/ablations/concat_fusion/benchmark.json"},
-    {"id": "no_conditioning", "label": "Without physicochemical conditioning", "change": "omit --conditional in every stage", "model_key": "no_conditioning", "benchmark_report": "../results/ablations/no_conditioning/benchmark.json"},
-    {"id": "no_adversarial", "label": "Without adversarial training", "change": "MLE warm-up followed directly by SCST", "model_key": "no_adversarial", "benchmark_report": "../results/ablations/no_adversarial/benchmark.json"},
-    {"id": "no_scst", "label": "Without SCST", "change": "evaluate the selected GAN checkpoint", "model_key": "no_scst", "benchmark_report": "../results/ablations/no_scst/benchmark.json"},
-    {"id": "softmax", "label": "Softmax relaxation", "change": "--discrete-relaxation softmax", "model_key": "softmax", "benchmark_report": "../results/ablations/softmax/benchmark.json"},
-    {"id": "wgan_gp", "label": "WGAN-GP objective", "change": "--gan-loss wgan_gp", "model_key": "wgan_gp", "benchmark_report": "../results/ablations/wgan_gp/benchmark.json"},
-    {"id": "no_reward_stability", "label": "SCST without II reward", "change": "SCST weights 0/0.5/0.5", "model_key": "no_reward_stability", "benchmark_report": "../results/ablations/no_reward_stability/benchmark.json"},
-    {"id": "no_reward_amp", "label": "SCST without AMP reward", "change": "SCST weights 0.5/0/0.5", "model_key": "no_reward_amp", "benchmark_report": "../results/ablations/no_reward_amp/benchmark.json"},
-    {"id": "no_reward_hemolysis", "label": "SCST without hemolysis reward", "change": "SCST weights 0.5/0.5/0", "model_key": "no_reward_hemolysis", "benchmark_report": "../results/ablations/no_reward_hemolysis/benchmark.json"}
-  ]
+    {
+      "id": "full",
+      "label": "Full model",
+      "change": "none",
+      "model_key": "full",
+      "benchmark_report": "../results/ablations/full__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "no_esm2",
+      "label": "Without ESM-2 warm-up",
+      "change": "MLE warm-up uses --no-esm",
+      "model_key": "no_esm2",
+      "benchmark_report": "../results/ablations/no_esm2__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "no_gatv2",
+      "label": "Without GATv2",
+      "change": "all stages use --no-gat",
+      "model_key": "no_gatv2",
+      "benchmark_report": "../results/ablations/no_gatv2__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "concat_fusion",
+      "label": "Concatenation fusion",
+      "change": "--fusion-type concat",
+      "model_key": "concat_fusion",
+      "benchmark_report": "../results/ablations/concat_fusion__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "no_conditioning",
+      "label": "Without physicochemical conditioning",
+      "change": "omit --conditional in every stage",
+      "model_key": "no_conditioning",
+      "benchmark_report": "../results/ablations/no_conditioning__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "no_adversarial",
+      "label": "Without adversarial training",
+      "change": "MLE warm-up followed directly by SCST",
+      "model_key": "no_adversarial",
+      "benchmark_report": "../results/ablations/no_adversarial__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "no_scst",
+      "label": "Without SCST",
+      "change": "evaluate the selected GAN checkpoint",
+      "model_key": "no_scst",
+      "benchmark_report": "../results/ablations/no_scst__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "softmax",
+      "label": "Softmax relaxation",
+      "change": "--discrete-relaxation softmax",
+      "model_key": "softmax",
+      "benchmark_report": "../results/ablations/softmax__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "wgan_gp",
+      "label": "WGAN-GP objective",
+      "change": "--gan-loss wgan_gp",
+      "model_key": "wgan_gp",
+      "benchmark_report": "../results/ablations/wgan_gp__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "no_reward_stability",
+      "label": "SCST without II reward",
+      "change": "SCST reward weights 0 / 1.0 (II-screen removed; AMP renormalised to 1)",
+      "model_key": "no_reward_stability",
+      "benchmark_report": "../results/ablations/no_reward_stability__rebuilt_2026-09-10/benchmark.json"
+    },
+    {
+      "id": "no_reward_amp",
+      "label": "SCST without AMP reward",
+      "change": "SCST reward weights 1.0 / 0 (AMP removed; II-screen renormalised to 1)",
+      "model_key": "no_reward_amp",
+      "benchmark_report": "../results/ablations/no_reward_amp__rebuilt_2026-09-10/benchmark.json"
+    }
+  ],
+  "dataset_tag": "rebuilt_2026-09-10",
+  "note": "The matrix has eleven variants, not twelve. The SCST reward has two active terms (II-screen and AMP); the hemolysis weight is fixed at zero because no author-ratified hemolysis endpoint was available at training time, and hemolysis is assessed only at evaluation time by an independent held-out predictor. A reward term that is never optimised cannot be ablated, so no_reward_hemolysis was removed rather than reported as a duplicate of the full model. Benchmark paths carry the dataset tag so a rerun on a different dataset cannot be confused with, or overwrite, an earlier run."
 }

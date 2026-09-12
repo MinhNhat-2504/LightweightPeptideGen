@@ -37,13 +37,20 @@ structure_evaluator:
   gat_heads: 4
 
 data:
-  train_path: dataset/rebuilt/train.fasta
-  train_csv: dataset/rebuilt/train.csv
-  val_path: dataset/rebuilt/validation.fasta
-  val_csv: dataset/rebuilt/validation.csv
-  test_path: dataset/rebuilt/test.fasta
-  test_csv: dataset/rebuilt/test.csv
-  dataset_report: dataset/rebuilt/dataset_build_report.json
+  # 2026-09-10: switched from dataset/rebuilt/ (sources recovered out of the legacy
+  # split CSVs; its manifest self-declared INTERIM / NOT FOR SUBMISSION) to
+  # dataset/rebuilt_2026-09-10/, built by config/dataset_manifest.json from primary
+  # downloads whose URL, retrieval time and SHA-256 are recorded in
+  # dataset_downloads_2026-09-10/download_provenance.json.
+  # Manuscript numbers must come from this build. The interim directory is kept so
+  # the earlier runs stay reproducible; do not delete it.
+  train_path: dataset/rebuilt_2026-09-10/train.fasta
+  train_csv: dataset/rebuilt_2026-09-10/train.csv
+  val_path: dataset/rebuilt_2026-09-10/validation.fasta
+  val_csv: dataset/rebuilt_2026-09-10/validation.csv
+  test_path: dataset/rebuilt_2026-09-10/test.fasta
+  test_csv: dataset/rebuilt_2026-09-10/test.csv
+  dataset_report: dataset/rebuilt_2026-09-10/dataset_build_report.json
   # Recomputed from sequence by peptidegen.data.features. Legacy activity and
   # toxicity proxy columns are intentionally excluded because their provenance
   # and definitions cannot be verified from the available source files.

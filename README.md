@@ -125,20 +125,20 @@ Không dùng lại `dataset/train.csv`, `val.csv`, `test.csv` cũ cho kết qu�
 Revision dùng quy trình hai giai đoạn. Manifest phải khai báo SHA-256 của từng
 source, định nghĩa nhãn/evidence và lệnh/phiên bản homology clustering. Giai đoạn
 đầu xuất FASTA đã lọc và exact-deduplicate; sau khi chạy MMseqs2, giai đoạn hai
-tạo `dataset/rebuilt/` gồm fixed splits, FASTA, row-level provenance ledger và
+tạo `dataset/rebuilt_2026-09-10/` gồm fixed splits, FASTA, row-level provenance ledger và
 `dataset_build_report.json` có hash. Các đường dẫn trong report là tương đối với
 thư mục chứa report để toàn bộ artifact vẫn kiểm chứng được sau khi chuyển máy.
 
 ```bash
 python -m peptidegen.data --manifest config/dataset_manifest.json \
-  --prepare-clustering-fasta dataset/clustering_input.fasta
+  --prepare-clustering-fasta dataset/clustering_input_2026-09-10.fasta
 
-mmseqs easy-cluster dataset/clustering_input.fasta dataset/mmseqs \
-  dataset/mmseqs_tmp --min-seq-id 0.4 -c 0.8 --cov-mode 0
+mmseqs easy-cluster dataset/clustering_input_2026-09-10.fasta dataset/mmseqs_0910 \
+  dataset/mmseqs_0910_tmp --min-seq-id 0.4 -c 0.8 --cov-mode 0
 
 python -m peptidegen.data --manifest config/dataset_manifest.json \
-  --cluster-tsv dataset/mmseqs_cluster.tsv --cluster-format mmseqs_rep_member \
-  --output-dir dataset/rebuilt
+  --cluster-tsv dataset/mmseqs_0910_cluster.tsv --cluster-format mmseqs_rep_member \
+  --output-dir dataset/rebuilt_2026-09-10
 ```
 
 Sáu biến điều kiện được tính lại trực tiếp từ chuỗi bằng cùng một implementation:
@@ -200,10 +200,10 @@ dán vào notebook, kèm cách trỏ `checkpoints/` sang Drive để resume khi 
 | Warm-up | `scripts/mle_warmup.py --conditional --esm-model ... --contact-graph` | Học có giám sát với ESM-2 embeddings + đồ thị tiếp xúc |
 | GAN | `train.py --conditional --resume checkpoints/warmup.pt` | Huấn luyện đối kháng |
 | Oracle AMP | `scripts/train_oracle.py amp --train ... --test ...` | ESM-2 + logistic regression, báo AUC trên test |
-| Oracle hemolysis | `scripts/train_oracle.py hemo --train ... --test ...` | Cần nhãn ngoài (HemoPI / DBAASP) |
+| Oracle hemolysis | `scripts/train_oracle.py hemo --train ... --test ...` | Cần nhãn ngoài (Hemolytik2, tải 2026-09-10; endpoint hồng cầu người, ngưỡng 100 µM) |
 | SCST | `scripts/scst_finetune.py --checkpoint ... --amp-oracle ... --entropy-coef 0.02` | Tinh chỉnh RL đa mục tiêu |
 | Sinh chuỗi | `generate.py --checkpoint checkpoints/scst_model.pt --model-id full --num 1000 --seed 42` | Xuất FASTA + provenance sidecar |
-| Đánh giá | `scripts/evaluate_generated.py --gen-dir ... --train-fasta dataset/rebuilt/train.fasta --sequence-plausibility` | Gộp nhiều seed, báo mean±SD/CI + kiểm định thống kê |
+| Đánh giá | `scripts/evaluate_generated.py --gen-dir ... --train-fasta dataset/rebuilt_2026-09-10/train.fasta --sequence-plausibility` | Gộp nhiều seed, báo mean±SD/CI + kiểm định thống kê |
 | Điều khiển được | `scripts/controllability.py --checkpoint ... --features ...` | Quét giá trị mục tiêu, đo Spearman/Pearson/MAE |
 | Độ mới | `scripts/novelty.py --gen-dir results/gen` | So khớp chính xác + khoảng cách Levenshtein với tập train |
 | Đếm tham số | `scripts/backbone_ablation.py params` | Báo số tham số hoạt động thực tế |

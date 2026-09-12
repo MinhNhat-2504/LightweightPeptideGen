@@ -13,7 +13,15 @@ set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 CONFIG="${CONFIG:-config/revision.yaml}"
-DATA_REPORT="${DATA_REPORT:-dataset/rebuilt/dataset_build_report.json}"
+# Thu muc dataset. Mac dinh la ban dung tu nguon tai that ngay 2026-09-10
+# (config/dataset_manifest.json). Bo cu $DATA_DIR/ tu khai INTERIM,
+# NOT FOR SUBMISSION nen khong duoc dung cho so lieu bai bao.
+DATA_DIR="${DATA_DIR:-dataset/rebuilt_2026-09-10}"
+# Nhan lan chay: driver bo qua buoc nao da co file, nen dung chung duong dan
+# voi lan chay truoc se AM THAM tai dung checkpoint huan luyen tren dataset cu.
+RUN_TAG="${RUN_TAG:-$(basename "$DATA_DIR")}"
+ABL="results/ablations"
+DATA_REPORT="${DATA_REPORT:-$DATA_DIR/dataset_build_report.json}"
 WARMUP_EPOCHS="${WARMUP_EPOCHS:-10}"
 GAN_EPOCHS="${GAN_EPOCHS:-50}"
 SEEDS=(${SEEDS:-123 456 789 1337})
@@ -23,7 +31,7 @@ test -f "$DATA_REPORT" || { echo "Thieu $DATA_REPORT" >&2; exit 2; }
 variant=full
 for seed in "${SEEDS[@]}"; do
   echo "==================== full / seed ${seed} ===================="
-  root="results/ablations/${variant}/seed${seed}"
+  root="${ABL}/${variant}__${RUN_TAG}/seed${seed}"
   warmup="$root/warmup.pt"
   gan_dir="$root/gan"
   mkdir -p "$root" "$gan_dir"

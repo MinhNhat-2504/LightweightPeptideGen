@@ -118,13 +118,36 @@ def checkpoint_paths(root: Path) -> Iterable[Path]:
             yield path
 
 
-def validate_dataset(root: Path, issues: List[str]) -> Dict[str, Any] | None:
-    report_path = root / "dataset/rebuilt/dataset_build_report.json"
+def resolve_dataset_dir(root: Path, explicit: str | None) -> Path:
+    """Which dataset build the audit should check.
+
+    Hard-coding dataset/rebuilt/ silently audits the wrong build once the runs move
+    to a different directory, which is exactly the failure this auditor exists to
+    prevent.  Precedence: --dataset-dir, then config/revision.yaml data.train_csv,
+    then the historical default.
+    """
+    if explicit:
+        return (root / explicit) if not Path(explicit).is_absolute() else Path(explicit)
+    config = root / "config/revision.yaml"
+    if config.exists():
+        for line in config.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("train_csv:"):
+                value = stripped.split(":", 1)[1].strip().strip('"').strip("'")
+                if value:
+                    return root / Path(value).parent
+    return root / "dataset/rebuilt"
+
+
+def validate_dataset(root: Path, issues: List[str],
+                     dataset_dir: Path | None = None) -> Dict[str, Any] | None:
+    data_dir = dataset_dir if dataset_dir is not None else root / "dataset/rebuilt"
+    report_path = data_dir / "dataset_build_report.json"
     report = load_report(report_path, issues, "dataset build report")
     if report is None:
         return None
     for split in ("train", "validation", "test"):
-        path = root / f"dataset/rebuilt/{split}.csv"
+        path = data_dir / f"{split}.csv"
         expected = (((report.get("split_artifacts") or {}).get(split) or {}).get("csv") or {}).get("sha256")
         if not path.exists() or not expected or sha256(path) != expected:
             issues.append(f"{split} CSV is absent or does not match the dataset report")
@@ -133,9 +156,9 @@ def validate_dataset(root: Path, issues: List[str]) -> Dict[str, Any] | None:
             sys.path.insert(0, str(root))
         from peptidegen.data.integrity import validate_dataset_build
         validate_dataset_build(
-            str(root / "dataset/rebuilt/train.csv"),
-            str(root / "dataset/rebuilt/validation.csv"),
-            str(root / "dataset/rebuilt/test.csv"),
+            str(data_dir / "train.csv"),
+            str(data_dir / "validation.csv"),
+            str(data_dir / "test.csv"),
             report_path=str(report_path),
         )
     except (ValueError, FileNotFoundError) as exc:
@@ -258,13 +281,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".")
     parser.add_argument("--out", default="results/artifact_audit.json")
+    parser.add_argument("--dataset-dir", default=None,
+                        help="dataset build to audit; defaults to config/revision.yaml "
+                             "data.train_csv, then dataset/rebuilt")
     parser.add_argument("--require-complete", action="store_true",
                         help="exit 2 unless every submission artifact passes")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     issues: List[str] = []
 
-    dataset_status = validate_dataset(root, issues)
+    dataset_dir = resolve_dataset_dir(root, args.dataset_dir)
+    dataset_status = validate_dataset(root, issues, dataset_dir)
     checkpoints = [checkpoint_record(path) for path in checkpoint_paths(root)]
     if not checkpoints:
         issues.append("No checkpoints found for audit.")
@@ -282,9 +309,29 @@ def main() -> None:
         issues.append("No reportable generated FASTA artifacts found.")
 
     ablations = validate_ablation_matrix(root, issues)
+    # The AMP oracle lives beside the dataset build it was trained on; hard-coding
+    # results/oracles/amp/ audits the oracle from the interim data instead.
+    amp_report = next(
+        (c for c in (
+            root / f"results/oracles/amp_{dataset_dir.name.replace('rebuilt_', '')}/oracle_amp_report.json",
+            root / f"results/oracles/amp__{dataset_dir.name}/oracle_amp_report.json",
+            root / "results/oracles/amp/oracle_amp_report.json",
+        ) if c.is_file()),
+        root / "results/oracles/amp/oracle_amp_report.json",
+    )
+    # Hemolysis is NOT a reward oracle: the SCST hemolysis weight is fixed at zero and
+    # hemolysis is assessed only at evaluation time by an independent held-out
+    # predictor, which must never have taken part in optimisation or model selection.
+    hemo_report = next(
+        (c for c in (
+            root / "results/hemolysis/hemolysis_oracle_report.json",
+            root / "results/oracles/hemolysis/oracle_hemo_report.json",
+        ) if c.is_file()),
+        root / "results/hemolysis/hemolysis_oracle_report.json",
+    )
     required_reports = {
-        "AMP reward oracle": root / "results/oracles/amp/oracle_amp_report.json",
-        "hemolysis reward oracle": root / "results/oracles/hemolysis/oracle_hemo_report.json",
+        "AMP reward oracle": amp_report,
+        "independent hemolysis evaluation predictor": hemo_report,
         "ablation summary": root / "results/ablation_study_summary.json",
         "controllability summary": root / "results/controllability_summary.json",
         "external validation": root / "results/external_validation_report.json",

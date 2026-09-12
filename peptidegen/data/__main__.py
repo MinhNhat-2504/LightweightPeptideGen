@@ -318,7 +318,10 @@ def write_clustering_input(rows: List[Dict], output: Path, manifest_path: Path,
                            minimum: int, maximum: int) -> None:
     """Write exact-deduplicated sequences with sequence-valued FASTA IDs."""
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("w", encoding="utf-8") as handle:
+    # newline="\n" is required: on Windows the default translates "\n" to CRLF, and
+    # MMseqs2 fails on CRLF FASTA input in ways that look like a crash rather than a
+    # parse error, so the clustering step must never emit platform line endings.
+    with output.open("w", newline="\n", encoding="utf-8") as handle:
         for row in sorted(rows, key=lambda item: item["sequence"]):
             sequence = row["sequence"]
             handle.write(f">{sequence}\n{sequence}\n")
@@ -409,7 +412,7 @@ def write_outputs(splits: Dict[str, List[Dict]], ledger: List[Dict], output: Pat
         rows = sorted(rows, key=lambda row: (row["label"], row["sequence"]))
         csv_path = output / f"{split}.csv"
         fasta_path = output / f"{split}.fasta"
-        with csv_path.open("w", newline="", encoding="utf-8") as csv_handle, fasta_path.open("w", encoding="utf-8") as fasta_handle:
+        with csv_path.open("w", newline="", encoding="utf-8") as csv_handle, fasta_path.open("w", newline="\n", encoding="utf-8") as fasta_handle:
             writer = None
             for index, row in enumerate(rows):
                 item = {

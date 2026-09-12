@@ -60,7 +60,7 @@ python -m peptidegen.data \
   --manifest config/dataset_manifest.json \
   --cluster-tsv dataset/mmseqs_cluster.tsv \
   --cluster-format mmseqs_rep_member \
-  --output-dir dataset/rebuilt --seed 42 --fractions 0.70 0.15 0.15
+  --output-dir dataset/rebuilt_2026-09-10 --seed 42 --fractions 0.70 0.15 0.15
 ```
 
 Do not continue if the builder reports an exact label conflict or a
@@ -88,10 +88,10 @@ signal only and must not be reused as independent AMP evidence.
 
 ```bash
 python scripts/train_oracle.py amp \
-  --train dataset/rebuilt/train.csv \
-  --val dataset/rebuilt/validation.csv \
-  --test dataset/rebuilt/test.csv \
-  --dataset-report dataset/rebuilt/dataset_build_report.json \
+  --train dataset/rebuilt_2026-09-10/train.csv \
+  --val dataset/rebuilt_2026-09-10/validation.csv \
+  --test dataset/rebuilt_2026-09-10/test.csv \
+  --dataset-report dataset/rebuilt_2026-09-10/dataset_build_report.json \
   --model esm2_t12_35M_UR50D \
   --model-revision 6fbf070e65b0b7291e7bbcd451118c216cff79d8 \
   --seed 42 \

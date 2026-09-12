@@ -15,8 +15,12 @@ set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 CONFIG="${CONFIG:-config/revision.yaml}"
-DATA_REPORT="${DATA_REPORT:-dataset/rebuilt/dataset_build_report.json}"
-AMP_ORACLE="${AMP_ORACLE:-results/oracles/amp/oracle_amp.pkl}"
+# Thu muc dataset. Mac dinh la ban dung tu nguon tai that ngay 2026-09-10
+# (config/dataset_manifest.json). Bo cu dataset/rebuilt/ tu khai INTERIM,
+# NOT FOR SUBMISSION nen khong duoc dung cho so lieu bai bao.
+DATA_DIR="${DATA_DIR:-dataset/rebuilt_2026-09-10}"
+DATA_REPORT="${DATA_REPORT:-$DATA_DIR/dataset_build_report.json}"
+AMP_ORACLE="${AMP_ORACLE:-results/oracles/amp_2026-09-10/oracle_amp.pkl}"
 WARMUP_EPOCHS="${WARMUP_EPOCHS:-10}"
 GAN_EPOCHS="${GAN_EPOCHS:-50}"
 SCST_STEPS="${SCST_STEPS:-2000}"
@@ -24,11 +28,15 @@ SCST_STEPS="${SCST_STEPS:-2000}"
 # (no cham chuoi toan W/F la 0.997 nhung cham AMP that chi 0.360) va chinh sach
 # sup che do — do duoc: 6 loai acid amin, W+F 94.3%, K+R 0%.
 KL_COEF="${KL_COEF:-0.1}"
-# Batch size rieng cho tung giai doan. SCST giu them mot ban sao model tham
-# chieu cho KL anchor nen ton VRAM hon GAN; tren GPU dung chung voi nguoi khac,
-# ha SCST_BATCH xuong 32 hoac 16 khi gap CUDA out of memory.
+# Batch size theo tung giai doan. CAC CON SO NAY DA DUOC CONG BO trong bang cau
+# hinh huan luyen cua bai (warm-up 64 / GAN 64 / SCST 16). Doi chung la doi
+# hyperparameter da bao cao, nen phai sua bai tuong ung — khong phai viec lam
+# lang le khi gap CUDA out of memory.
+#
+# SCST giu them mot ban sao model tham chieu cho KL anchor nen ton VRAM hon GAN.
+# Neu OOM tren GPU dung chung: DUNG LAI va bao tac gia, dung tu ha batch.
 GAN_BATCH="${GAN_BATCH:-64}"
-SCST_BATCH="${SCST_BATCH:-64}"
+SCST_BATCH="${SCST_BATCH:-16}"
 NUM_GEN="${NUM_GEN:-1000}"
 CONTROLLABILITY_N_PER="${CONTROLLABILITY_N_PER:-200}"
 ESM2_REVISION="${ESM2_REVISION:-6fbf070e65b0b7291e7bbcd451118c216cff79d8}"
@@ -38,14 +46,19 @@ test -f "$DATA_REPORT" || { echo "Thieu $DATA_REPORT" >&2; exit 2; }
 test -f "$AMP_ORACLE"  || { echo "Thieu AMP oracle: $AMP_ORACLE" >&2; exit 2; }
 
 variant=full
+# Nhan cua lan chay, lay tu ten thu muc dataset. BAT BUOC phai co: driver bo qua
+# buoc nao da co file (if [ ! -f ... ]), nen neu dung chung duong dan voi lan chay
+# truoc, no se AM THAM tai dung checkpoint huan luyen tren dataset cu.
+RUN_TAG="${RUN_TAG:-$(basename "$DATA_DIR")}"
+outroot="results/ablations/${variant}__${RUN_TAG}"
 
 for seed in "${SEEDS[@]}"; do
   echo "==================== full / seed ${seed} ===================="
-  root="results/ablations/${variant}/seed${seed}"
+  root="${outroot}/seed${seed}"
   warmup="$root/warmup.pt"
   gan_dir="$root/gan"
   final="$root/scst_model.pt"
-  mkdir -p "$root" "$gan_dir" "results/ablations/${variant}/gen"
+  mkdir -p "$root" "$gan_dir" "${outroot}/gen"
 
   if [ ! -f "$warmup" ]; then
     echo "--- [1/4] MLE warm-up ---"
@@ -70,7 +83,7 @@ for seed in "${SEEDS[@]}"; do
   if [ ! -f "$final" ]; then
     echo "--- [3/4] SCST (khong co hemolysis) ---"
     "$PYTHON_BIN" scripts/scst_finetune.py --checkpoint "$gan_dir/best_model.pt" \
-      --condition-csv dataset/rebuilt/train.csv --amp-oracle "$AMP_ORACLE" \
+      --condition-csv "$DATA_DIR/train.csv" --amp-oracle "$AMP_ORACLE" \
       --oracle-id ESM2Oracle_AMP_reward --steps "$SCST_STEPS" \
       --batch-size "$SCST_BATCH" --lr 1e-5 \
       --w-ii-screen 0.5 --w-amp 0.5 --w-hemolysis 0 \
@@ -84,24 +97,24 @@ for seed in "${SEEDS[@]}"; do
   "$PYTHON_BIN" generate.py --checkpoint "$final" --model-id "$variant" \
     --num "$NUM_GEN" --seed "$seed" \
     --temperature 1.0 --top-p 0.9 --min-length 5 --max-length 50 \
-    --output "results/ablations/${variant}/gen/${variant}_seed${seed}.fasta"
+    --output "${outroot}/gen/${variant}_seed${seed}.fasta"
 
   echo "--- Tinh dieu khien duoc ---"
   mkdir -p results/controllability
   "$PYTHON_BIN" scripts/controllability.py --checkpoint "$final" \
-    --train-csv dataset/rebuilt/train.csv --n-per "$CONTROLLABILITY_N_PER" \
+    --train-csv "$DATA_DIR/train.csv" --n-per "$CONTROLLABILITY_N_PER" \
     --temperature 1.0 --top-p 0.9 --seed "$seed" \
-    --out "results/controllability/full_seed${seed}.json"
+    --out "results/controllability/${RUN_TAG}_full_seed${seed}.json"
 
   echo "=== xong seed ${seed} ==="
 done
 
 echo "==================== Danh gia gop 5 seed ===================="
 "$PYTHON_BIN" scripts/evaluate_generated.py \
-  --gen-dir "results/ablations/${variant}/gen" --reference "$variant" \
+  --gen-dir "${outroot}/gen" --reference "$variant" \
   --expected-models "$variant" --expected-n "$NUM_GEN" \
-  --train-fasta dataset/rebuilt/train.fasta --sequence-plausibility \
+  --train-fasta "$DATA_DIR/train.fasta" --sequence-plausibility \
   --esm-model-revision "$ESM2_REVISION" \
-  --out "results/ablations/${variant}/benchmark.json"
+  --out "${outroot}/benchmark.json"
 
-echo "HOAN TAT. Ket qua chinh: results/ablations/full/benchmark.json"
+echo "HOAN TAT. Ket qua chinh: ${outroot}/benchmark.json"

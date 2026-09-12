@@ -107,7 +107,15 @@ def download_file(url: str, dest_path: Path, fallback_urls: List[str] = None, va
     return False
 
 
-def harvest_uniprot_negatives(uniprot_gz_path: Path, max_negatives: int = 92230) -> List[str]:
+def harvest_uniprot_negatives(uniprot_gz_path: Path, max_negatives: int | None = None) -> List[str]:
+    """Extract non-AMP negatives from Swiss-Prot.
+
+    ``max_negatives`` previously defaulted to 92230 -- the corpus size claimed in the
+    submitted manuscript, which the source data does not reproduce (the union of all
+    five AMP databases yields 26,971 unique 5-50 aa sequences).  Hard-coding it here
+    silently caps the negative set at a fabricated number, so the default is now None
+    (no cap) and any cap must be passed explicitly and justified.
+    """
     """Extract Non-AMP negative samples from UniProt Swiss-Prot."""
     logger.info("Extracting non-AMP negative samples from UniProt Swiss-Prot...")
     negatives = []
@@ -124,7 +132,7 @@ def harvest_uniprot_negatives(uniprot_gz_path: Path, max_negatives: int = 92230)
                     if not any(kw in header_lower for kw in excluded_keywords):
                         if filter_sequence(seq):
                             negatives.append(seq)
-                            if len(negatives) >= max_negatives:
+                            if max_negatives is not None and len(negatives) >= max_negatives:
                                 break
                 header = line[1:]
                 buf = []

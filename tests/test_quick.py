@@ -5,6 +5,8 @@ import torch
 import sys
 sys.path.insert(0, '.')
 
+from tests._dataset_path import train_csv
+
 def test_imports():
     """Test all imports work"""
     print("Testing imports...")
@@ -41,7 +43,7 @@ def test_dataset():
     from peptidegen.data.vocabulary import VOCAB
     
     dataset = ConditionalPeptideDataset.from_csv(
-        'dataset/train.csv', 
+        str(train_csv()), 
         vocab=VOCAB, 
         max_length=50, 
         min_length=5
@@ -50,7 +52,13 @@ def test_dataset():
     batch = dataset[0]
     assert 'input_ids' in batch
     assert 'condition' in batch
-    assert batch['condition'].shape[0] == 8  # 8 features
+    # Six conditioning variables, not the eight this test originally asserted.
+    # Two of the original columns were dropped during the revision audit because
+    # their definitions could not be traced to a reproducible computation; the
+    # six-variable schema is the author-ratified one and is recomputed from the
+    # sequence by peptidegen.data.features.
+    assert batch['condition'].shape[0] == dataset.get_condition_dim()
+    assert batch['condition'].shape[0] == 6
     print(f"✓ Dataset: {len(dataset)} samples, condition_dim={batch['condition'].shape[0]}")
 
 def test_generator():

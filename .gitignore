@@ -16,8 +16,10 @@ dataset/*.csv
 dataset/*.fasta
 dataset/raw/
 dataset/rebuilt/
+dataset/rebuilt_*/
 dataset/derived_from_legacy/
-dataset/clustering_input.fasta
+dataset/clustering_input*
+dataset/hemo_mmseqs*
 dataset/mmseqs*
 dataset/amps_pdb/
 checkpoints/
