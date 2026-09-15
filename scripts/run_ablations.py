@@ -154,7 +154,12 @@ def tex_value(aggregate: Dict[str, Any], metric: str) -> str:
 def latex_table(variants: Sequence[Dict[str, Any]], contrasts: Dict[str, Any]) -> str:
     lines = [
         r"\begin{table*}[ht]",
-        r"\caption{\RevisionMarker Pre-specified ablation study. Values are mean $\pm$ sample standard deviation across matched random seeds. II$<40$ is an empirical sequence-derived surrogate, not a thermodynamic stability measurement.}",
+        r"\caption{\RevisionMarker Pre-specified ablation study. Values are mean $\pm$ sample "
+        r"standard deviation across matched random seeds. II$<40$ is an empirical "
+        r"sequence-derived surrogate, not a thermodynamic stability measurement. In the paired "
+        r"contrast table below, $\Delta$ is computed as full $-$ variant, so a \emph{negative} "
+        r"value means the ablated variant scored higher than the full model. Tests are "
+        r"two-sided.}",
         r"\label{tab:ablation_audited}",
         r"\centering",
         r"\small",
@@ -176,7 +181,13 @@ def latex_table(variants: Sequence[Dict[str, Any]], contrasts: Dict[str, Any]) -
     lines.extend([
         r"\bottomrule", r"\end{tabular}", r"\vspace{0.5em}",
         r"\RevisionTableRows", r"\begin{tabular}{lrrrr}", r"\toprule",
-        r"Paired contrast vs. full & $\Delta$ II$<40$ (95\% CI) & Cohen's $d_z$ & paired $p_{\mathrm{Holm}}$ & Wilcoxon $p_{\mathrm{Holm}}$ \\",
+        # The sign convention must be on the page.  The value printed is
+        # full minus variant, so a NEGATIVE number means the ablated variant
+        # scored HIGHER than the full model.  Without saying so, a reader has no
+        # way to tell, and the cases where an ablation beats the full model are
+        # exactly the ones that must not be misread.
+        r"Paired contrast vs. full & $\Delta$ II$<40$ = full $-$ variant (95\% CI)"
+        r" & Cohen's $d_z$ & paired $p_{\mathrm{Holm}}$ & Wilcoxon $p_{\mathrm{Holm}}$ \\",
         r"\midrule",
     ])
     metric = "stable_rate_ii_lt_40_percent"

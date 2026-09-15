@@ -11,8 +11,10 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
+from pathlib import Path
 
 import torch
 
@@ -22,19 +24,42 @@ sys.path.insert(0, ROOT)
 from peptidegen.data.vocabulary import VOCAB
 
 
-def build_model(name):
+def resolve_condition_dim(checkpoint_path, explicit):
+    """Chieu dieu kien phai khop mo hinh de xuat, khong duoc doan.
+
+    Uu tien --condition-dim; neu khong co thi doc run_record.json ma
+    train_baseline.py ghi canh checkpoint. Khong suy tu shape state_dict: duong di
+    cua condition_dim khac nhau giua cac model (hydramp qua fc_h0, m3cad qua
+    FeatureEncoder), nen quy tac suy se hong am tham khi doi model.
+    """
+    if explicit is not None:
+        return int(explicit)
+    record = Path(checkpoint_path).parent / "run_record.json"
+    if record.is_file():
+        value = json.loads(record.read_text(encoding="utf-8")).get("condition_dim")
+        if value:
+            return int(value)
+    raise SystemExit(
+        f"khong xac dinh duoc condition_dim: khong co {record} va khong truyen "
+        "--condition-dim. Doi chung phai dung dung chieu dieu kien cua mo hinh de "
+        "xuat (schema da duyet: 6); gia tri 8 go cung truoc day khong khop dataset "
+        "da dung lai."
+    )
+
+
+def build_model(name, condition_dim):
     if name == "hydramp":
         from baselines.hydramp.model import HydrAMPModel
         return HydrAMPModel(vocab_size=24, embedding_dim=128, hidden_dim=256,
-                            latent_dim=128, condition_dim=8, num_layers=2)
+                            latent_dim=128, condition_dim=condition_dim, num_layers=2)
     if name == "m3cad":
         from baselines.m3cad.model import M3CADModel
         return M3CADModel(vocab_size=24, embedding_dim=128, hidden_dim=256,
-                          latent_dim=128, condition_dim=8, cond_enc_dim=32, num_layers=2)
+                          latent_dim=128, condition_dim=condition_dim, cond_enc_dim=32, num_layers=2)
     if name == "esm2gen":
         from baselines.esm2gen.model import ESM2DecoderModel
         return ESM2DecoderModel(vocab_size=24, embedding_dim=128, hidden_dim=256,
-                                latent_dim=128, esm_projection_dim=128, condition_dim=8)
+                                latent_dim=128, esm_projection_dim=128, condition_dim=condition_dim)
     raise ValueError(name)
 
 
@@ -47,6 +72,8 @@ def main():
     ap.add_argument("--seeds", type=int, nargs="+", default=[42, 123, 456, 789, 1337])
     ap.add_argument("--out-dir", default="results/gen")
     ap.add_argument("--batch-size", type=int, default=512)
+    ap.add_argument("--condition-dim", type=int, default=None,
+                    help="chieu dieu kien; mac dinh doc tu run_record.json canh checkpoint")
     args = ap.parse_args()
 
     default_names = {
@@ -62,7 +89,9 @@ def main():
         )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = build_model(args.model)
+    cond_dim = resolve_condition_dim(args.checkpoint, args.condition_dim)
+    print(f"[{args.name}] condition_dim = {cond_dim}")
+    model = build_model(args.model, cond_dim)
     ckpt = torch.load(args.checkpoint, map_location=device)
     state = ckpt.get("model_state_dict", ckpt)
     model.load_state_dict(state)
@@ -75,7 +104,7 @@ def main():
         with torch.no_grad():
             for i in range(0, args.num, args.batch_size):
                 b = min(args.batch_size, args.num - i)
-                cond = torch.randn(b, 8, device=device)        # normalized feature space
+                cond = torch.randn(b, cond_dim, device=device)  # normalized feature space
                 tok = model.generate(num_samples=b, condition=cond,
                                      sos_idx=VOCAB.sos_idx, eos_idx=VOCAB.eos_idx,
                                      max_len=52, temperature=1.0, top_p=0.9, device=device)

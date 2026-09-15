@@ -1,0 +1,42 @@
+{
+  "upload_type": "software",
+  "title": "LightweightPeptideGen: resource-efficient, controllable antimicrobial peptide generation via cross-attention fusion of ESM-2 and graph attention networks",
+  "access_right": "open",
+  "license": "mit",
+  "language": "eng",
+  "creators": [
+    {
+      "name": "Tam, My Quang",
+      "affiliation": "Van Lang University"
+    },
+    {
+      "name": "Nhat, Trinh Ngoc Minh",
+      "affiliation": "Van Lang University"
+    },
+    {
+      "name": "Kien, Pham Xuan",
+      "affiliation": "Ho Chi Minh University of Banking"
+    },
+    {
+      "name": "Vinh, Truong Hoang",
+      "affiliation": "Ho Chi Minh City Open University"
+    },
+    {
+      "name": "Hien, Nguyen Thanh",
+      "affiliation": "Ho Chi Minh University of Banking"
+    },
+    {
+      "name": "Linh, Nguyen Thi My",
+      "affiliation": "Van Lang University"
+    }
+  ],
+  "keywords": [
+    "antimicrobial peptides",
+    "peptide generation",
+    "protein language models",
+    "ESM-2",
+    "graph attention networks",
+    "self-critical sequence training",
+    "conditional generation"
+  ]
+}

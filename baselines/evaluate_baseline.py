@@ -153,13 +153,19 @@ def main():
                         help='Path to specific checkpoint. If None, checks Default paths.')
     parser.add_argument('--num-samples', type=int, default=1000,
                         help='Number of sequences to generate and evaluate')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Which training seed to evaluate. Checkpoints are written '
+                             'per seed, so this selects one run rather than averaging.')
     args = parser.parse_args()
 
     device = get_device()
     models = ['hydramp', 'm3cad', 'esm2gen', 'pepgraphormer'] if args.model == 'all' else [args.model]
 
     for m in models:
-        ckpt = args.checkpoint if args.checkpoint else f'baselines/checkpoints/{m}/best.pt'
+        # Checkpoint nam duoi thu muc theo seed: 5 seed huan luyen doc lap khong
+        # duoc ghi de len nhau. Mac dinh cu (khong co seed) khong con ton tai.
+        ckpt = (args.checkpoint if args.checkpoint
+                else f'baselines/checkpoints/{m}/seed{args.seed}/best.pt')
         evaluate_model(m, ckpt, args.num_samples, device)
 
 

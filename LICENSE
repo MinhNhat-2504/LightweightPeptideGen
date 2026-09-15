@@ -1,0 +1,44 @@
+MIT License
+
+Copyright (c) 2026 Tam Quang My, Nhat Trinh Ngoc Minh, Kien Pham Xuan,
+Vinh Truong Hoang, Hien Nguyen Thanh, Linh Nguyen Thi My
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+NOTE ON THIRD-PARTY RESOURCES
+
+This licence covers only the source code in this repository. It does not
+extend to the external databases and tools the work depends on, none of which
+are redistributed here:
+
+  DRAMP 3.0, APD6, dbAMP 3.0   free for academic use under terms stated by
+                               their providers; cited and linked
+  AMPBenchmark                 no licence declared in its repository
+                               (checked 2026-09-10); cited, not redistributed
+  UniProtKB/Swiss-Prot         CC BY 4.0 (UniProt Consortium)
+  Hemolytik2                   GPL-3.0; cited and linked, not redistributed
+  amPEPpy                      GPL-3.0; invoked as an external tool, not
+                               vendored into this code
+  ToxinPred3                   invoked as an external package, not vendored
+
+Because no GPL-3.0 material is copied into or linked against this code, the
+copyleft terms of Hemolytik2 and amPEPpy do not extend to it. Anyone who
+bundles those resources into a derivative must revisit that analysis.

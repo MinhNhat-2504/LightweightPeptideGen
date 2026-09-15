@@ -24,12 +24,23 @@ def get_dataloaders(
     max_seq_length: int = 50,
     min_seq_length: int = 5,
     max_samples: int = 0,
+    label_value: Optional[int] = 1,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train and validation DataLoaders using the project's ConditionalPeptideDataset.
 
     Args:
+        label_value: which class to train the generator on.  Defaults to 1, i.e.
+            antimicrobial rows only, because that is what the proposed model uses
+            (``scripts/mle_warmup.py`` and ``train.py`` both pass
+            ``label_value=1``).  Leaving this unset trained the controls on the
+            whole corpus -- 78,679 rows instead of 9,638 -- which is both a
+            confound in the very comparison the controls exist to support and
+            roughly eight times the work.  Pass None only to deliberately train
+            on every label.
         max_samples: if >0, cap the number of train rows (and val at max_samples//5).
+            Note this truncates by position, so it cannot be used to select a
+            class; use ``label_value`` for that.
             Use to train baselines on the same subset as the proposed model for a
             fair comparison / faster runs.
 
@@ -41,6 +52,7 @@ def get_dataloaders(
         csv_path=train_csv,
         sequence_col='sequence',
         label_col='label',
+        label_value=label_value,
         max_length=max_seq_length,
         min_length=min_seq_length,
         normalize_features=True,
@@ -51,6 +63,7 @@ def get_dataloaders(
         csv_path=val_csv,
         sequence_col='sequence',
         label_col='label',
+        label_value=label_value,
         max_length=max_seq_length,
         min_length=min_seq_length,
         normalize_features=True,

@@ -60,6 +60,51 @@ def latex(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def resolve_run_paths(input_dir: Path, model: str, seeds: List[int], parser) -> List[Path]:
+    """Locate one controllability report per seed.
+
+    The exact name ``{model}_seed{N}.json`` is tried first.  The drivers prefix
+    that name with a run tag derived from the dataset directory, so that a rerun
+    on new data cannot be confused with an earlier run; matching only the exact
+    name meant the aggregator failed at the very end of a multi-day campaign with
+    "missing controllability runs" while the files sat next to it under their
+    tagged names.
+
+    Falling back to a suffix match is only safe if it cannot silently mix runs,
+    so every seed must resolve to exactly one file and all of them must carry the
+    same prefix.
+    """
+    exact = [input_dir / f"{model}_seed{seed}.json" for seed in seeds]
+    if all(path.exists() for path in exact):
+        return exact
+
+    resolved: List[Path] = []
+    prefixes = set()
+    for seed in seeds:
+        matches = sorted(input_dir.glob(f"*{model}_seed{seed}.json"))
+        if not matches:
+            parser.error(
+                f"no controllability run for seed {seed}: looked for "
+                f"{input_dir / f'{model}_seed{seed}.json'} and for *_{model}_seed{seed}.json "
+                f"in {input_dir}"
+            )
+        if len(matches) > 1:
+            parser.error(
+                f"seed {seed} matches several controllability runs "
+                f"({[p.name for p in matches]}); pass --model to disambiguate"
+            )
+        path = matches[0]
+        prefixes.add(path.name[: path.name.index(f"{model}_seed{seed}.json")])
+        resolved.append(path)
+
+    if len(prefixes) != 1:
+        parser.error(
+            f"controllability runs come from different campaigns (prefixes {sorted(prefixes)}); "
+            "refusing to aggregate across them"
+        )
+    return resolved
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", default="results/controllability")
@@ -69,10 +114,7 @@ def main() -> None:
     parser.add_argument("--tex-out", default="results/controllability.tex")
     args = parser.parse_args()
 
-    paths = [Path(args.input_dir) / f"{args.model}_seed{seed}.json" for seed in args.expected_seeds]
-    missing = [str(path) for path in paths if not path.exists()]
-    if missing:
-        parser.error(f"missing controllability runs: {missing}")
+    paths = resolve_run_paths(Path(args.input_dir), args.model, args.expected_seeds, parser)
 
     reports = []
     for expected_seed, path in zip(args.expected_seeds, paths):

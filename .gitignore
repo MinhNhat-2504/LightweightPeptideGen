@@ -27,6 +27,9 @@ results/
 logs/
 config/release_manifest.json
 baselines/logs/
+# evaluate_baseline.py ghi FASTA + JSON vao day; khong che thi cay git ban
+# va moi artifact sinh sau do bi dong dau reportable=false.
+baselines/results/
 *.pt
 *.pth
 *.pkl
