@@ -276,5 +276,17 @@ Nhẹ hơn nhiều so với cảm giác ban đầu — điểm chính của hư�
 
 ## Giấy phép
 
-Chưa chọn giấy phép. Trong lúc bài báo còn đang bình duyệt, mã nguồn được công bố để phục
-vụ mục đích tham khảo và tái lập kết quả.
+Mã nguồn trong repo này phát hành theo **MIT License** — xem [`LICENSE`](LICENSE).
+
+Giấy phép đó **chỉ phủ mã nguồn của repo này**. Các cơ sở dữ liệu và công cụ bên ngoài mà
+công trình phụ thuộc đều được **trích dẫn và dẫn link, không đóng gói lại** ở đây, và điều
+khoản riêng của chúng vẫn hiệu lực — xem [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+Bản lưu bất biến của mã đã tạo ra các kết quả được báo cáo:
+DOI [10.5281/zenodo.22771618](https://doi.org/10.5281/zenodo.22771618),
+tương ứng tag `v1.0.0` (commit `624c130`). Các commit sau đó trên `main` chứa bản sửa công
+cụ tìm ra sau khi các lần chạy đã xong; từng bản sửa được liệt kê kèm lý do nó không thể
+đổi con số nào trong [`CHANGELOG_POST_RELEASE.md`](CHANGELOG_POST_RELEASE.md).
+
+Ai muốn **tái lập** số liệu đã báo cáo thì dùng bản lưu ở DOI; ai muốn **phát triển tiếp**
+thì dùng `main`.
